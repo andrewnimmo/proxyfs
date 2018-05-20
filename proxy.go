@@ -12,14 +12,17 @@ import (
 
 // Proxy can be used to setup a proxy server and a filesystem which can be used to control it
 type Proxy struct {
-	Server  *goproxy.ProxyHttpServer
-	Scope   string
-	RootDir *Dir
+	Server             *goproxy.ProxyHttpServer
+	Scope              *regexp.Regexp
+	RootDir            *Dir
+	FuseConn           *fuse.Conn
+	InterceptResponses bool
+	InterceptRequests  bool
 }
 
 // NewProxy returns a new proxy, compiling the given scope to a regexp
 func NewProxy(scope string) (*Proxy, error) {
-	_, err := regexp.Compile(scope)
+	r, err := regexp.Compile(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -27,8 +30,10 @@ func NewProxy(scope string) (*Proxy, error) {
 	server := goproxy.NewProxyHttpServer()
 
 	dir := NewDir()
-	ret := &Proxy{Scope: scope, Server: server, RootDir: dir}
-	dir.AddNode("scope", NewStringFuncRW(&ret.Scope))
+	ret := &Proxy{Server: server, RootDir: dir, Scope: r}
+	dir.AddNode("scope", NewRegexpFile(ret.Scope))
+	dir.AddNode("intercept_responses", NewBoolFile(&ret.InterceptResponses))
+	dir.AddNode("intercept_requests", NewBoolFile(&ret.InterceptRequests))
 
 	return ret, nil
 }
@@ -36,16 +41,18 @@ func NewProxy(scope string) (*Proxy, error) {
 // ListenAndServe sets up the proxy on the given host string (e.g. "127.0.0.1:8080" or ":8080") and
 // sets up intercepting functions for in scope items
 func (p *Proxy) ListenAndServe(host string) error {
-	scopeRegexp := regexp.MustCompile(p.Scope)
-	p.Server.OnRequest(goproxy.ReqHostMatches(scopeRegexp)).HandleConnect(goproxy.AlwaysMitm)
-	p.Server.OnResponse(goproxy.ReqHostMatches(scopeRegexp)).DoFunc(p.HandleResponse)
+	p.Server.OnRequest(goproxy.UrlMatches(p.Scope)).HandleConnect(goproxy.AlwaysMitm)
+	p.Server.OnResponse(goproxy.UrlMatches(p.Scope)).DoFunc(p.HandleResponse)
 
 	return http.ListenAndServe(host, p.Server)
 }
 
 // HandleResponse handles a response through the proxy server
 func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-	log.Println(ctx.Req.Host)
+	log.Println("Host:", ctx.Req.Host)
+	log.Println("Scope:", p.Scope)
+	log.Println("Intercepting requests:", p.InterceptRequests)
+	log.Println("Intercepting responses:", p.InterceptResponses)
 	r.Header.Set("Proxied", "true")
 
 	return r
@@ -63,24 +70,22 @@ func (p *Proxy) Root() (fs.Node, error) {
 	return p.RootDir, nil
 }
 
-func (p *Proxy) Mount(path string) (*fuse.Conn, error) {
+func (p *Proxy) Mount(path string) error {
 	c, err := fuse.Mount(path, fuse.FSName("proxyfs"))
 	if err != nil {
-		defer c.Close()
-		return nil, err
+		return err
 	}
+	p.FuseConn = c
 
-	err = fs.Serve(c, p)
+	err = fs.Serve(p.FuseConn, p)
 	if err != nil {
-		defer c.Close()
-		return nil, err
+		return err
 	}
 
-	<-c.Ready
+	<-p.FuseConn.Ready
 	if err = c.MountError; err != nil {
-		defer c.Close()
-		return nil, err
+		return err
 	}
 
-	return c, nil
+	return nil
 }

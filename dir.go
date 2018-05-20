@@ -9,14 +9,13 @@ import (
 )
 
 type FunctionNode interface {
-	GetMode() uint64
+	fs.NodeFsyncer
 }
 
 type FunctionReader interface {
 	fs.Node
 	fs.HandleReadAller
 	FunctionNode
-	Length(cts context.Context) (int, error)
 }
 
 type FunctionWriter interface {
@@ -70,44 +69,4 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	}
 
 	return subdirs, nil
-}
-
-// Creates a file from a pointer to a string which is read and updated appropriately. Implements
-// the FunctionReader and FunctionWriter interfaces
-type StringFuncRW struct {
-	data *string
-	mode os.FileMode
-}
-
-// NewStringFuncRW returns a new StringFuncRW using the given string pointer
-func NewStringFuncRW(data *string) *StringFuncRW {
-	return &StringFuncRW{data: data, mode: 0666}
-}
-
-// Return the value of the string
-func (rw *StringFuncRW) ReadAll(ctx context.Context) ([]byte, error) {
-	return []byte(*rw.data), nil
-}
-
-// Returns the length of the underlying string
-func (rw *StringFuncRW) Length(ctx context.Context) (int, error) {
-	return len(*rw.data), nil
-}
-
-// Modify the underlying string
-func (rw *StringFuncRW) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	(*rw.data) = string(req.Data)
-	resp.Size = len(*rw.data)
-	return nil
-}
-
-// Implement Attr to implement the fs.Node interface
-func (rw StringFuncRW) Attr(ctx context.Context, attr *fuse.Attr) error {
-	attr.Mode = rw.mode
-	attr.Size = uint64(len(*rw.data))
-	return nil
-}
-
-func (rw *StringFuncRW) GetMode() os.FileMode {
-	return rw.mode
 }
