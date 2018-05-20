@@ -1,13 +1,40 @@
 package main
 
-import "log"
+import (
+	"fmt"
+	"log"
+	"net"
+	"os"
+
+	flag "github.com/spf13/pflag"
+)
 
 func main() {
-	proxy, err := NewProxy("www.reddit.com")
+	// Flag parsing
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "%s [OPTIONS]... [MOUNTPOINT]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	bindHost := flag.IPP("listen", "l", net.ParseIP("127.0.0.1"), "The address to listen on. Defaults to loopback interface.")
+	bindPort := flag.IntP("port", "p", 8080, "The port to listen on.")
+	scope := flag.StringP("scope", "s", ".", "A regex defining the scope of what to intercept")
+	flag.Parse()
+
+	if flag.NArg() != 1 || flag.Arg(0) == "" {
+		fmt.Println("Please supply a mountpoint!")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	mountpoint := flag.Arg(0)
+
+	// Run the proxy and filesystem
+	proxy, err := NewProxy(*scope)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	go proxy.Mount("/tmp/proxyfs")
-	log.Fatal(proxy.ListenAndServe(":8081"))
+	go proxy.Mount(mountpoint)
+	log.Fatal(proxy.ListenAndServe(fmt.Sprintf("%v:%v", *bindHost, *bindPort)))
 }
