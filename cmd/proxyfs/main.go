@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/danielthatcher/proxyfs"
 	flag "github.com/spf13/pflag"
 )
 
@@ -30,7 +31,7 @@ func main() {
 	mountpoint := flag.Arg(0)
 
 	// Run the proxy and filesystem
-	proxy, err := NewProxy(*scope)
+	proxy, err := proxyfs.NewProxy(*scope)
 	if err != nil {
 		log.Fatal(err)
 	}
