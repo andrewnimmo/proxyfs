@@ -2,6 +2,7 @@ package proxyfs
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"strconv"
 
@@ -113,4 +114,31 @@ func (d SliceDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	}
 
 	return ret, nil
+}
+
+// NewHttpReqDir returns a Dir that represents the values of a http.Request
+// object. By default, these values are readable and writeable.
+func NewHttpReqDir(req *http.Request) *Dir {
+	d := NewDir()
+	d.AddNode("method", NewStringFile(&req.Method))
+	d.AddNode("url", NewURLFile(req.URL))
+	d.AddNode("proto", NewStringFile(&req.Proto))
+	d.AddNode("contentlength", NewInt64File(&req.ContentLength))
+	d.AddNode("close", NewBoolFile(&req.Close))
+	d.AddNode("host", NewStringFile(&req.Host))
+	d.AddNode("requrl", NewStringFile(&req.RequestURI))
+	return d
+}
+
+// NewHttpRespDir returns a Dir that represents the values of a http.Response
+// object. By default, these values are readable and writeable.
+func NewProxyHttpRespDir(resp *http.Response) *Dir {
+	d := NewDir()
+	d.AddNode("status", NewStringFile(&resp.Status))
+	d.AddNode("statuscode", NewIntFile(&resp.StatusCode))
+	d.AddNode("proto", NewStringFile(&resp.Proto))
+	d.AddNode("contentlength", NewInt64File(&resp.ContentLength))
+	d.AddNode("close", NewBoolFile(&resp.Close))
+	d.AddNode("req", NewHttpReqDir(resp.Request))
+	return d
 }

@@ -42,6 +42,7 @@ func NewProxy(scope string) (*Proxy, error) {
 // sets up intercepting functions for in scope items
 func (p *Proxy) ListenAndServe(host string) error {
 	p.Server.OnRequest(goproxy.UrlMatches(p.Scope)).HandleConnect(goproxy.AlwaysMitm)
+	p.Server.OnRequest(goproxy.UrlMatches(p.Scope)).DoFunc(p.HandleRequest)
 	p.Server.OnResponse(goproxy.UrlMatches(p.Scope)).DoFunc(p.HandleResponse)
 
 	return http.ListenAndServe(host, p.Server)
