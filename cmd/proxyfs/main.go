@@ -5,7 +5,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 
+	"bazil.org/fuse"
 	"github.com/danielthatcher/proxyfs"
 	flag "github.com/spf13/pflag"
 )
@@ -35,6 +37,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Handle ctrl-c
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		<-c
+		fuse.Unmount(mountpoint)
+		os.Exit(1)
+	}()
 
 	go proxy.Mount(mountpoint)
 	log.Fatal(proxy.ListenAndServe(fmt.Sprintf("%v:%v", *bindHost, *bindPort)))
