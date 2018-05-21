@@ -2,25 +2,25 @@ package proxyfs
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"bazil.org/fuse"
 )
 
 // Creates a file from a pointer to a bool which is read and updated appropriately. Implements
-// the FunctionReader and FunctionWriter interfaces
+// the FunctionNode interface
 type BoolFile struct {
+	File
 	Data *bool
-	Mode os.FileMode
 }
 
-var _ FunctionReader = (*BoolFile)(nil)
-var _ FunctionWriter = (*BoolFile)(nil)
+var _ FunctionNode = (*BoolFile)(nil)
 
 // NewBoolFile returns a new BoolFile using the given bool pointer
 func NewBoolFile(Data *bool) *BoolFile {
-	return &BoolFile{Data: Data, Mode: 0666}
+	ret := &BoolFile{Data: Data}
+	ret.Mode = 0666
+	return ret
 }
 
 // Return the value of the bool
@@ -69,4 +69,10 @@ func (bf BoolFile) Attr(ctx context.Context, attr *fuse.Attr) error {
 // Implement Fsync to implement the fs.NodeFsyncer interface
 func (BoolFile) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	return nil
+}
+
+var _ FunctionNodeable = (*BoolFile)(nil)
+
+func (bf *BoolFile) Node() FunctionNode {
+	return bf
 }

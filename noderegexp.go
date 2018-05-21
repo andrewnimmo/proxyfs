@@ -2,26 +2,25 @@ package proxyfs
 
 import (
 	"context"
-	"os"
 	"regexp"
 	"strings"
 
 	"bazil.org/fuse"
 )
 
-// Creates a file from a pointer to a regexp.Regexp which is read and updated appropriately.
-// Implements the FunctionReader and FunctionWriter interfaces
+// Creates a file from a pointer to a regexp.Regexp which is read and updated appropriately.  Implements the FunctionNode interface
 type RegexpFile struct {
+	File
 	Data *regexp.Regexp
-	Mode os.FileMode
 }
 
-var _ FunctionReader = (*RegexpFile)(nil)
-var _ FunctionWriter = (*RegexpFile)(nil)
+var _ FunctionNode = (*RegexpFile)(nil)
 
 // NewRegexpFile returns a new RegexpFile using the given regexp.Regexp pointer
 func NewRegexpFile(Data *regexp.Regexp) *RegexpFile {
-	return &RegexpFile{Data: Data, Mode: 0666}
+	ret := &RegexpFile{Data: Data}
+	ret.Mode = 0666
+	return ret
 }
 
 // Return the value of the regexp.Regexp
@@ -59,4 +58,10 @@ func (rf RegexpFile) Attr(ctx context.Context, attr *fuse.Attr) error {
 // Implement Fsync to implement the fs.NodeFsyncer interface
 func (RegexpFile) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	return nil
+}
+
+var _ FunctionNodeable = (*RegexpFile)(nil)
+
+func (rf *RegexpFile) Node() FunctionNode {
+	return rf
 }

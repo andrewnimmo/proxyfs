@@ -3,29 +3,25 @@ package proxyfs
 import (
 	"context"
 	"os"
+	"strconv"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 )
 
 type FunctionNode interface {
-	fs.NodeFsyncer
-}
-
-type FunctionReader interface {
 	fs.Node
 	fs.HandleReadAller
-	FunctionNode
-}
-
-type FunctionWriter interface {
-	fs.Node
 	fs.HandleWriter
-	FunctionNode
 }
 
-// Dir represetns a directory in the filesystem. It contains subnodes of type Dir,
-// FunctionReader, or FunctionWriter
+// Nodeable objects
+type FunctionNodeable interface {
+	Node() FunctionNode
+	DirentType() fuse.DirentType
+}
+
+// Dir represents a directory in the filesystem. It contains subnodes of type Dir or FunctionNode
 type Dir struct {
 	SubNodes map[string]fs.Node
 }
@@ -39,6 +35,14 @@ func (d *Dir) AddNode(name string, node fs.Node) {
 }
 
 var _ fs.Node = (*Dir)(nil)
+
+func (d Dir) Node() FunctionNode {
+	return d
+}
+
+func (Dir) DirentType() fuse.DirentType {
+	return fuse.DT_Dir
+}
 
 // Attr is implemented to comply with the fs.Node interface. It sets the attributes
 // of the filesystem
@@ -69,4 +73,44 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	}
 
 	return subdirs, nil
+}
+
+func (Dir) ReadAll(ctx context.Context) ([]byte, error) {
+	return nil, fuse.EPERM
+}
+
+func (Dir) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	return fuse.EPERM
+}
+
+var _ FunctionNodeable = (*Dir)(nil)
+
+// SliceDir exposes the elements of a slice through the slice's indexes. If a
+// slice has length 5, then a slicedir will create nodes named "0", "1", "2",
+// "3", and "4".
+type SliceDir struct {
+	Dir
+	Nodes []FunctionNodeable
+}
+
+func NewSliceDir(nodes []FunctionNodeable) *SliceDir {
+	return &SliceDir{Nodes: nodes}
+}
+
+func (d SliceDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	i, err := strconv.Atoi(name)
+	if err != nil || i >= len(d.Nodes) {
+		return nil, fuse.ENOENT
+	}
+
+	return d.Nodes[i].Node(), nil
+}
+
+func (d SliceDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	ret := make([]fuse.Dirent, len(d.Nodes))
+	for i := range ret {
+		ret[i] = fuse.Dirent{Name: strconv.Itoa(i), Type: d.Nodes[i].DirentType()}
+	}
+
+	return ret, nil
 }

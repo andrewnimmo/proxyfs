@@ -2,25 +2,24 @@ package proxyfs
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"bazil.org/fuse"
 )
 
-// Creates a file from a pointer to a string which is read and updated appropriately. Implements
-// the FunctionReader and FunctionWriter interfaces
+// Creates a file from a pointer to a string which is read and updated appropriately. Implements the FunctionNode interface.
 type StringFile struct {
+	File
 	Data *string
-	Mode os.FileMode
 }
 
-var _ FunctionReader = (*StringFile)(nil)
-var _ FunctionWriter = (*StringFile)(nil)
+var _ FunctionNode = (*StringFile)(nil)
 
 // NewStringFile returns a new StringFile using the given string pointer
 func NewStringFile(Data *string) *StringFile {
-	return &StringFile{Data: Data, Mode: 0666}
+	ret := &StringFile{Data: Data}
+	ret.Mode = 0666
+	return ret
 }
 
 // Return the value of the string
@@ -56,4 +55,10 @@ func (sf StringFile) Attr(ctx context.Context, attr *fuse.Attr) error {
 // Implement Fsync to implement the fs.NodeFsyncer interface
 func (StringFile) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	return nil
+}
+
+var _ FunctionNodeable = (*StringFile)(nil)
+
+func (sf *StringFile) Node() FunctionNode {
+	return sf
 }
