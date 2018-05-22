@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"sync"
 
 	"bazil.org/fuse"
 )
@@ -12,13 +13,14 @@ import (
 type URLFile struct {
 	File
 	Data *url.URL
+	Lock *sync.RWMutex
 }
 
 var _ FunctionNode = (*URLFile)(nil)
 
 // NewURLFile returns a new URLFile using the given url.URL pourl.URLer
 func NewURLFile(Data *url.URL) *URLFile {
-	ret := &URLFile{Data: Data}
+	ret := &URLFile{Data: Data, Lock: &sync.RWMutex{}}
 	ret.Mode = 0666
 	return ret
 }
@@ -28,11 +30,16 @@ func (f *URLFile) ReadAll(ctx context.Context) ([]byte, error) {
 	if f.Mode&0444 == 0 {
 		return nil, fuse.EPERM
 	}
+
+	f.Lock.RLock()
+	defer f.Lock.RUnlock()
 	return []byte(f.Data.String()), nil
 }
 
 // Returns the length of the underlying url.URL
 func (f *URLFile) Length(ctx context.Context) (int, error) {
+	f.Lock.RLock()
+	defer f.Lock.RUnlock()
 	return len(f.Data.String()), nil
 }
 
@@ -47,14 +54,18 @@ func (f *URLFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.
 		return fuse.ERANGE
 	}
 
+	f.Lock.Lock()
 	(*f.Data) = *u
 	resp.Size = len(req.Data)
+	f.Lock.Unlock()
 	return nil
 }
 
 // Implement Attr to implement the fs.Node url.URLerface
 func (f URLFile) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = f.Mode
+	f.Lock.RLock()
+	defer f.Lock.RUnlock()
 	attr.Size = uint64(len(f.Data.String()))
 	return nil
 }

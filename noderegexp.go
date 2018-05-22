@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"sync"
 
 	"bazil.org/fuse"
 )
@@ -12,13 +13,14 @@ import (
 type RegexpFile struct {
 	File
 	Data *regexp.Regexp
+	Lock *sync.RWMutex
 }
 
 var _ FunctionNode = (*RegexpFile)(nil)
 
 // NewRegexpFile returns a new RegexpFile using the given regexp.Regexp pointer
 func NewRegexpFile(Data *regexp.Regexp) *RegexpFile {
-	ret := &RegexpFile{Data: Data}
+	ret := &RegexpFile{Data: Data, Lock: &sync.RWMutex{}}
 	ret.Mode = 0666
 	return ret
 }
@@ -28,6 +30,9 @@ func (rf *RegexpFile) ReadAll(ctx context.Context) ([]byte, error) {
 	if rf.Mode&0444 == 0 {
 		return nil, fuse.EPERM
 	}
+
+	rf.Lock.RLock()
+	defer rf.Lock.RUnlock()
 	return []byte((*rf.Data).String()), nil
 }
 
@@ -43,14 +48,18 @@ func (rf *RegexpFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 		return fuse.ERANGE
 	}
 
+	rf.Lock.Lock()
 	*rf.Data = *r
 	resp.Size = len(req.Data)
+	rf.Lock.Unlock()
 	return nil
 }
 
 // Implement Attr to implement the fs.Node interface
 func (rf RegexpFile) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = rf.Mode
+	rf.Lock.RLock()
+	defer rf.Lock.RUnlock()
 	attr.Size = uint64(len((*rf.Data).String()))
 	return nil
 }

@@ -3,6 +3,7 @@ package proxyfs
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"bazil.org/fuse"
 )
@@ -12,13 +13,14 @@ import (
 type BoolFile struct {
 	File
 	Data *bool
+	Lock *sync.RWMutex
 }
 
 var _ FunctionNode = (*BoolFile)(nil)
 
 // NewBoolFile returns a new BoolFile using the given bool pointer
 func NewBoolFile(Data *bool) *BoolFile {
-	ret := &BoolFile{Data: Data}
+	ret := &BoolFile{Data: Data, Lock: &sync.RWMutex{}}
 	ret.Mode = 0666
 	return ret
 }
@@ -29,6 +31,8 @@ func (bf *BoolFile) ReadAll(ctx context.Context) ([]byte, error) {
 		return nil, fuse.EPERM
 	}
 
+	bf.Lock.RLock()
+	defer bf.Lock.RUnlock()
 	if *bf.Data {
 		return []byte("1"), nil
 	} else {
@@ -44,6 +48,8 @@ func (bf *BoolFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fus
 
 	c := strings.TrimSpace(string(req.Data))
 
+	bf.Lock.Lock()
+	defer bf.Lock.Unlock()
 	if c == "0" {
 		*bf.Data = false
 		resp.Size = len(req.Data)

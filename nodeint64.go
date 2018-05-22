@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 
 	"bazil.org/fuse"
 )
@@ -12,13 +13,14 @@ import (
 type Int64File struct {
 	File
 	Data *int64
+	Lock *sync.RWMutex
 }
 
 var _ FunctionNode = (*Int64File)(nil)
 
 // NewInt64File returns a new Int64File using the given int64 point64er
 func NewInt64File(Data *int64) *Int64File {
-	ret := &Int64File{Data: Data}
+	ret := &Int64File{Data: Data, Lock: &sync.RWMutex{}}
 	ret.Mode = 0666
 	return ret
 }
@@ -28,11 +30,16 @@ func (f *Int64File) ReadAll(ctx context.Context) ([]byte, error) {
 	if f.Mode&0444 == 0 {
 		return nil, fuse.EPERM
 	}
+
+	f.Lock.RLock()
+	defer f.Lock.RUnlock()
 	return []byte(strconv.FormatInt(*f.Data, 10)), nil
 }
 
 // Returns the length of the underlying int64
 func (f *Int64File) Length(ctx context.Context) (int, error) {
+	f.Lock.RLock()
+	defer f.Lock.RUnlock()
 	return len(strconv.FormatInt(*f.Data, 10)), nil
 }
 
@@ -47,14 +54,18 @@ func (f *Int64File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fus
 		return fuse.ERANGE
 	}
 
+	f.Lock.Lock()
 	(*f.Data) = i
 	resp.Size = len(req.Data)
+	f.Lock.Unlock()
 	return nil
 }
 
 // Implement Attr to implement the fs.Node int64erface
 func (f Int64File) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = f.Mode
+	f.Lock.RLock()
+	defer f.Lock.RUnlock()
 	attr.Size = uint64(len(strconv.FormatInt(*f.Data, 10)))
 	return nil
 }
