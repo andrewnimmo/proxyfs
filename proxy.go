@@ -1,9 +1,9 @@
 package proxyfs
 
 import (
-	"log"
 	"net/http"
 	"regexp"
+	"sync"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -16,8 +16,24 @@ type Proxy struct {
 	Scope              *regexp.Regexp
 	RootDir            *Dir
 	FuseConn           *fuse.Conn
-	InterceptResponses bool
 	InterceptRequests  bool
+	InterceptResponses bool
+	Requests           []ProxyReq
+	Responses          []ProxyResp
+	RequestsLock       *sync.RWMutex
+	ResponsesLock      *sync.RWMutex
+}
+
+// ProxyReq is a wrapper for a http.Request, and a channel used to control intercepting
+type ProxyReq struct {
+	Req  *http.Request
+	Wait chan int
+}
+
+// ProxyResp is a wrapper for a http.Response, and a channel used to control intercepting
+type ProxyResp struct {
+	Resp *http.Response
+	Wait chan int
 }
 
 // NewProxy returns a new proxy, compiling the given scope to a regexp
@@ -30,10 +46,23 @@ func NewProxy(scope string) (*Proxy, error) {
 	server := goproxy.NewProxyHttpServer()
 
 	dir := NewDir()
-	ret := &Proxy{Server: server, RootDir: dir, Scope: r}
+	ret := &Proxy{Server: server,
+		RootDir:       dir,
+		Scope:         r,
+		Requests:      make([]ProxyReq, 0),
+		Responses:     make([]ProxyResp, 0),
+		RequestsLock:  &sync.RWMutex{},
+		ResponsesLock: &sync.RWMutex{},
+	}
+
 	dir.AddNode("scope", NewRegexpFile(ret.Scope))
-	dir.AddNode("intercept_responses", NewBoolFile(&ret.InterceptResponses))
-	dir.AddNode("intercept_requests", NewBoolFile(&ret.InterceptRequests))
+
+	reqNode := NewBoolFile(&ret.InterceptRequests)
+	respNode := NewBoolFile(&ret.InterceptResponses)
+	dir.AddNode("intercept_requests", reqNode)
+	dir.AddNode("intercept_responses", respNode)
+
+	go ret.dispatchIntercepts(reqNode.Change, respNode.Change)
 
 	return ret, nil
 }
@@ -50,27 +79,57 @@ func (p *Proxy) ListenAndServe(host string) error {
 
 // HandleResponse handles a response through the proxy server
 func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-	log.Println("Host:", ctx.Req.Host)
-	log.Println("Scope:", p.Scope)
-	log.Println("Intercepting requests:", p.InterceptRequests)
-	log.Println("Intercepting responses:", p.InterceptResponses)
-	r.Header.Set("Proxied", "true")
+	// Add to the queue
+	proxyResp := ProxyResp{Resp: r, Wait: make(chan int)}
+	p.ResponsesLock.Lock()
+	i := len(p.Responses)
+	p.Responses = append(p.Responses, proxyResp)
+	p.ResponsesLock.Unlock()
+
+	// Wait until forwarded
+	if p.InterceptResponses {
+		<-proxyResp.Wait
+	}
+
+	// Remove the response from the queue before returning
+	p.ResponsesLock.Lock()
+	p.Responses = append(p.Responses[:i], p.Responses[i+1:]...)
+	p.ResponsesLock.Unlock()
 
 	return r
 }
 
 // HandleRequest handles a request through the proxy server
 func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	// Add to the queue
+	proxyReq := ProxyReq{Req: r, Wait: make(chan int)}
+	p.RequestsLock.Lock()
+	i := len(p.Requests)
+	p.Requests = append(p.Requests, proxyReq)
+	p.RequestsLock.Unlock()
+
+	// Wait until forwarded
+	if p.InterceptRequests {
+		<-proxyReq.Wait
+	}
+
+	// Remove the request from the queue before returning
+	p.RequestsLock.Lock()
+	p.Requests = append(p.Requests[:i], p.Requests[i+1:]...)
+	p.RequestsLock.Unlock()
+
 	return r, nil
 }
 
 var _ fs.FS = (*Proxy)(nil)
 
-// Root is implemented to comply with the fs.FS interface. It returns a root node of the virtual and an error filesystem
+// Root is implemented to comply with the fs.FS interface.
+// It returns a root node of the virtual and an error filesystem
 func (p *Proxy) Root() (fs.Node, error) {
 	return p.RootDir, nil
 }
 
+// Mount monuts the proxy's pseudo filesystem at the given path, returning any error encountered.
 func (p *Proxy) Mount(path string) error {
 	c, err := fuse.Mount(path, fuse.FSName("proxyfs"))
 	if err != nil {
@@ -89,4 +148,25 @@ func (p *Proxy) Mount(path string) error {
 	}
 
 	return nil
+}
+
+// Listend for changes to p.InterceptRequests and p.InterceptResponses, and start/stop
+// intercepting appropriately
+func (p *Proxy) dispatchIntercepts(req <-chan int, resp <-chan int) {
+	for {
+		select {
+		case <-req:
+			if !p.InterceptRequests {
+				for _, r := range p.Requests {
+					r.Wait <- 1
+				}
+			}
+		case <-resp:
+			if !p.InterceptResponses {
+				for _, r := range p.Responses {
+					r.Wait <- 1
+				}
+			}
+		}
+	}
 }
