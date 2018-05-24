@@ -22,6 +22,8 @@ func NewIntFile(Data *int) *IntFile {
 	ret := &IntFile{Data: Data}
 	ret.Mode = 0666
 	ret.Lock = &sync.RWMutex{}
+	ret.ValRead = ret.valRead
+	ret.ValWrite = ret.valWrite
 	return ret
 }
 

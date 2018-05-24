@@ -21,6 +21,8 @@ func NewStringFile(Data *string) *StringFile {
 	ret := &StringFile{Data: Data}
 	ret.Mode = 0666
 	ret.Lock = &sync.RWMutex{}
+	ret.ValRead = ret.valRead
+	ret.ValWrite = ret.valWrite
 	return ret
 }
 

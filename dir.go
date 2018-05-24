@@ -86,31 +86,41 @@ func (Dir) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteRe
 
 var _ FunctionNodeable = (*Dir)(nil)
 
+// The FunctionNodeList interface is implemented by objectis which hold
+// a slice of FunctionNodeables This is designed to allow slices of
+// FunctionNodeables to be passed around, e.g. to SliceDir.
+type FunctionNodeList interface {
+	GetNode(i int) FunctionNode
+	GetDirentType(i int) fuse.DirentType
+	Length() int
+}
+
 // SliceDir exposes the elements of a slice through the slice's indexes. If a
 // slice has length 5, then a slicedir will create nodes named "0", "1", "2",
 // "3", and "4".
 type SliceDir struct {
 	Dir
-	Nodes []FunctionNodeable
+	Nodes FunctionNodeList
 }
 
-func NewSliceDir(nodes []FunctionNodeable) *SliceDir {
+func NewSliceDir(nodes FunctionNodeList) *SliceDir {
 	return &SliceDir{Nodes: nodes}
 }
 
 func (d SliceDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	i, err := strconv.Atoi(name)
-	if err != nil || i >= len(d.Nodes) {
+	if err != nil || i >= d.Nodes.Length() {
 		return nil, fuse.ENOENT
 	}
 
-	return d.Nodes[i].Node(), nil
+	return d.Nodes.GetNode(i), nil
 }
 
 func (d SliceDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	ret := make([]fuse.Dirent, len(d.Nodes))
+	ret := make([]fuse.Dirent, d.Nodes.Length())
 	for i := range ret {
-		ret[i] = fuse.Dirent{Name: strconv.Itoa(i), Type: d.Nodes[i].DirentType()}
+		ret[i] = fuse.Dirent{Name: strconv.Itoa(i),
+			Type: d.Nodes.GetDirentType(i)}
 	}
 
 	return ret, nil

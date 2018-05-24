@@ -8,6 +8,7 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/elazarl/goproxy"
+	"github.com/gobuffalo/uuid"
 )
 
 // Proxy can be used to setup a proxy server and a filesystem which can be used to control it
@@ -18,8 +19,8 @@ type Proxy struct {
 	FuseConn           *fuse.Conn
 	InterceptRequests  bool
 	InterceptResponses bool
-	Requests           []ProxyReq
-	Responses          []ProxyResp
+	Requests           ProxyRequests
+	Responses          ProxyResponses
 	RequestsLock       *sync.RWMutex
 	ResponsesLock      *sync.RWMutex
 }
@@ -28,13 +29,21 @@ type Proxy struct {
 type ProxyReq struct {
 	Req  *http.Request
 	Wait chan int
+	ID   uuid.UUID
 }
 
 // ProxyResp is a wrapper for a http.Response, and a channel used to control intercepting
 type ProxyResp struct {
 	Resp *http.Response
 	Wait chan int
+	ID   uuid.UUID
 }
+
+// A slice of ProxyReq that implements FunctionNodeSliceable
+type ProxyRequests []ProxyReq
+
+// A slice of ProxyResp that implements FunctionNodeSliceable
+type ProxyResponses []ProxyResp
 
 // NewProxy returns a new proxy, compiling the given scope to a regexp
 func NewProxy(scope string) (*Proxy, error) {
@@ -49,18 +58,23 @@ func NewProxy(scope string) (*Proxy, error) {
 	ret := &Proxy{Server: server,
 		RootDir:       dir,
 		Scope:         r,
-		Requests:      make([]ProxyReq, 0),
-		Responses:     make([]ProxyResp, 0),
+		Requests:      make(ProxyRequests, 0),
+		Responses:     make(ProxyResponses, 0),
 		RequestsLock:  &sync.RWMutex{},
 		ResponsesLock: &sync.RWMutex{},
 	}
 
 	dir.AddNode("scope", NewRegexpFile(ret.Scope))
 
+	// Intercept controls
 	reqNode := NewBoolFile(&ret.InterceptRequests)
 	respNode := NewBoolFile(&ret.InterceptResponses)
 	dir.AddNode("intercept_requests", reqNode)
 	dir.AddNode("intercept_responses", respNode)
+
+	// Responses and requests
+	dir.AddNode("req", NewSliceDir(&ret.Requests))
+	dir.AddNode("resp", NewSliceDir(&ret.Responses))
 
 	go ret.dispatchIntercepts(reqNode.Change, respNode.Change)
 
@@ -80,9 +94,13 @@ func (p *Proxy) ListenAndServe(host string) error {
 // HandleResponse handles a response through the proxy server
 func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 	// Add to the queue
-	proxyResp := ProxyResp{Resp: r, Wait: make(chan int)}
+	id, err := uuid.NewV1()
+	if err != nil {
+		panic("Couldn't create UUID!")
+	}
+
+	proxyResp := ProxyResp{Resp: r, Wait: make(chan int), ID: id}
 	p.ResponsesLock.Lock()
-	i := len(p.Responses)
 	p.Responses = append(p.Responses, proxyResp)
 	p.ResponsesLock.Unlock()
 
@@ -93,7 +111,12 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 
 	// Remove the response from the queue before returning
 	p.ResponsesLock.Lock()
-	p.Responses = append(p.Responses[:i], p.Responses[i+1:]...)
+	for i, x := range p.Responses {
+		if x.ID == proxyResp.ID {
+			p.Responses = append(p.Responses[:i], p.Responses[i+1:]...)
+			break
+		}
+	}
 	p.ResponsesLock.Unlock()
 
 	return r
@@ -102,9 +125,12 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 // HandleRequest handles a request through the proxy server
 func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 	// Add to the queue
-	proxyReq := ProxyReq{Req: r, Wait: make(chan int)}
+	id, err := uuid.NewV1()
+	if err != nil {
+		panic("Couldn't create UUID!")
+	}
+	proxyReq := ProxyReq{Req: r, Wait: make(chan int), ID: id}
 	p.RequestsLock.Lock()
-	i := len(p.Requests)
 	p.Requests = append(p.Requests, proxyReq)
 	p.RequestsLock.Unlock()
 
@@ -115,7 +141,11 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 
 	// Remove the request from the queue before returning
 	p.RequestsLock.Lock()
-	p.Requests = append(p.Requests[:i], p.Requests[i+1:]...)
+	for i, x := range p.Requests {
+		if x.ID == proxyReq.ID {
+			p.Requests = append(p.Requests[:i], p.Requests[i+1:]...)
+		}
+	}
 	p.RequestsLock.Unlock()
 
 	return r, nil
@@ -169,4 +199,30 @@ func (p *Proxy) dispatchIntercepts(req <-chan int, resp <-chan int) {
 			}
 		}
 	}
+}
+
+// Interface implementations...
+
+func (pr ProxyRequests) GetNode(i int) FunctionNode {
+	return NewHttpReqDir(pr[i].Req)
+}
+
+func (ProxyRequests) GetDirentType(i int) fuse.DirentType {
+	return fuse.DT_Dir
+}
+
+func (pr ProxyRequests) Length() int {
+	return len(pr)
+}
+
+func (pr ProxyResponses) GetNode(i int) FunctionNode {
+	return NewProxyHttpRespDir(pr[i].Resp)
+}
+
+func (ProxyResponses) GetDirentType(i int) fuse.DirentType {
+	return fuse.DT_Dir
+}
+
+func (pr ProxyResponses) Length() int {
+	return len(pr)
 }
