@@ -40,10 +40,10 @@ type ProxyResp struct {
 	ID   uuid.UUID
 }
 
-// A slice of ProxyReq that implements FunctionNodeSliceable
+// A slice of ProxyReq that implements VarNodeSliceable
 type ProxyRequests []ProxyReq
 
-// A slice of ProxyResp that implements FunctionNodeSliceable
+// A slice of ProxyResp that implements VarNodeSliceable
 type ProxyResponses []ProxyResp
 
 // NewProxy returns a new proxy, compiling the given scope to a regexp
@@ -205,7 +205,7 @@ func (p *Proxy) dispatchIntercepts(req <-chan int, resp <-chan int) {
 
 // Interface implementations...
 
-func (pr ProxyRequests) GetNode(i int) fusebox.FunctionNode {
+func (pr ProxyRequests) GetNode(i int) fusebox.VarNode {
 	return NewHttpReqDir(pr[i].Req)
 }
 
@@ -217,7 +217,7 @@ func (pr ProxyRequests) Length() int {
 	return len(pr)
 }
 
-func (pr ProxyResponses) GetNode(i int) fusebox.FunctionNode {
+func (pr ProxyResponses) GetNode(i int) fusebox.VarNode {
 	return NewProxyHttpRespDir(pr[i].Resp)
 }
 
