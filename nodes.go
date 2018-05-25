@@ -31,7 +31,7 @@ func NewProxyHttpRespDir(resp *http.Response) *fusebox.Dir {
 	d.AddNode("proto", fusebox.NewStringFile(&resp.Proto))
 	d.AddNode("contentlength", fusebox.NewInt64File(&resp.ContentLength))
 	d.AddNode("close", fusebox.NewBoolFile(&resp.Close))
-	d.AddNode("req", fusebox.NewHttpReqDir(resp.Request))
+	d.AddNode("req", NewHttpReqDir(resp.Request))
 	return d
 }
 
