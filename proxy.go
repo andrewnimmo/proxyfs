@@ -1,4 +1,4 @@
-package proxyfs
+package main
 
 import (
 	"net/http"
@@ -7,6 +7,7 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"github.com/danielthatcher/fusebox"
 	"github.com/elazarl/goproxy"
 	"github.com/gobuffalo/uuid"
 )
@@ -15,7 +16,7 @@ import (
 type Proxy struct {
 	Server             *goproxy.ProxyHttpServer
 	Scope              *regexp.Regexp
-	RootDir            *Dir
+	RootDir            *fusebox.Dir
 	FuseConn           *fuse.Conn
 	InterceptRequests  bool
 	InterceptResponses bool
@@ -54,8 +55,9 @@ func NewProxy(scope string) (*Proxy, error) {
 
 	server := goproxy.NewProxyHttpServer()
 
-	dir := NewDir()
-	ret := &Proxy{Server: server,
+	dir := fusebox.NewDir()
+	ret := &Proxy{
+		Server:        server,
 		RootDir:       dir,
 		Scope:         r,
 		Requests:      make(ProxyRequests, 0),
@@ -64,17 +66,17 @@ func NewProxy(scope string) (*Proxy, error) {
 		ResponsesLock: &sync.RWMutex{},
 	}
 
-	dir.AddNode("scope", NewRegexpFile(ret.Scope))
+	dir.AddNode("scope", fusebox.NewRegexpFile(ret.Scope))
 
 	// Intercept controls
-	reqNode := NewBoolFile(&ret.InterceptRequests)
-	respNode := NewBoolFile(&ret.InterceptResponses)
+	reqNode := fusebox.NewBoolFile(&ret.InterceptRequests)
+	respNode := fusebox.NewBoolFile(&ret.InterceptResponses)
 	dir.AddNode("intercept_requests", reqNode)
 	dir.AddNode("intercept_responses", respNode)
 
 	// Responses and requests
-	dir.AddNode("req", NewSliceDir(&ret.Requests))
-	dir.AddNode("resp", NewSliceDir(&ret.Responses))
+	dir.AddNode("req", fusebox.NewSliceDir(&ret.Requests))
+	dir.AddNode("resp", fusebox.NewSliceDir(&ret.Responses))
 
 	go ret.dispatchIntercepts(reqNode.Change, respNode.Change)
 
@@ -203,7 +205,7 @@ func (p *Proxy) dispatchIntercepts(req <-chan int, resp <-chan int) {
 
 // Interface implementations...
 
-func (pr ProxyRequests) GetNode(i int) FunctionNode {
+func (pr ProxyRequests) GetNode(i int) fusebox.FunctionNode {
 	return NewHttpReqDir(pr[i].Req)
 }
 
@@ -215,7 +217,7 @@ func (pr ProxyRequests) Length() int {
 	return len(pr)
 }
 
-func (pr ProxyResponses) GetNode(i int) FunctionNode {
+func (pr ProxyResponses) GetNode(i int) fusebox.FunctionNode {
 	return NewProxyHttpRespDir(pr[i].Resp)
 }
 
