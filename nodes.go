@@ -26,6 +26,7 @@ func NewHTTPReqDir(req *http.Request) *fusebox.Dir {
 	d.AddNode("host", fusebox.NewStringFile(&req.Host))
 	d.AddNode("headers", NewHTTPHeaderDir(req.Header))
 	d.AddNode("raw", NewHTTPReqRawFile(req))
+
 	d.AddNode("requrl", fusebox.NewStringFile(&req.RequestURI))
 
 	lenNode := fusebox.NewInt64File(&req.ContentLength)
@@ -75,7 +76,9 @@ type ProxyResponses []ProxyResp
 // Interface implementations for ProxyReq and ProxyResp...
 
 func (pr ProxyRequests) GetNode(i int) fusebox.VarNode {
-	return NewHTTPReqDir(pr[i].Req)
+	d := NewHTTPReqDir(pr[i].Req)
+	d.AddNode("forward", fusebox.NewChanFile(pr[i].Wait))
+	return d
 }
 
 func (ProxyRequests) GetDirentType(i int) fuse.DirentType {
@@ -87,7 +90,9 @@ func (pr ProxyRequests) Length() int {
 }
 
 func (pr ProxyResponses) GetNode(i int) fusebox.VarNode {
-	return NewHTTPRespDir(pr[i].Resp)
+	d := NewHTTPRespDir(pr[i].Resp)
+	d.AddNode("forward", fusebox.NewChanFile(pr[i].Wait))
+	return d
 }
 
 func (ProxyResponses) GetDirentType(i int) fuse.DirentType {
