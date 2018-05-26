@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 
@@ -20,7 +21,8 @@ func main() {
 	}
 	bindHost := flag.IPP("listen", "l", net.ParseIP("127.0.0.1"), "The address to listen on. Defaults to loopback interface.")
 	bindPort := flag.IntP("port", "p", 8080, "The port to listen on.")
-	scope := flag.StringP("scope", "s", ".", "A regex defining the scope of what to intercept")
+	scope := flag.StringP("scope", "s", ".", "A regex defining the scope of what to intercept.")
+	upstream := flag.StringP("upstream", "u", "", "The address of the upstream proxy to use.")
 	flag.Parse()
 
 	if flag.NArg() != 1 || flag.Arg(0) == "" {
@@ -30,6 +32,17 @@ func main() {
 	}
 
 	mountpoint := flag.Arg(0)
+
+	// Validate arguments
+	var upURL *url.URL
+	if *upstream != "" {
+		u, err := url.Parse(*upstream)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		upURL = u
+	}
 
 	// Run the proxy and filesystem
 	proxy, err := NewProxy(*scope)
@@ -46,6 +59,9 @@ func main() {
 		os.Exit(1)
 	}()
 
+	// Actually run
 	go proxy.Mount(mountpoint)
-	log.Fatal(proxy.ListenAndServe(fmt.Sprintf("%v:%v", *bindHost, *bindPort)))
+	bind := fmt.Sprintf("%v:%v", *bindHost, *bindPort)
+
+	log.Fatal(proxy.ListenAndServe(bind, upURL))
 }

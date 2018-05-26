@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/url"
 	"regexp"
 	"sync"
 
@@ -65,10 +66,15 @@ func NewProxy(scope string) (*Proxy, error) {
 
 // ListenAndServe sets up the proxy on the given host string (e.g. "127.0.0.1:8080" or ":8080") and
 // sets up intercepting functions for in scope items
-func (p *Proxy) ListenAndServe(host string) error {
+func (p *Proxy) ListenAndServe(host string, upstream *url.URL) error {
 	p.Server.OnRequest(goproxy.UrlMatches(p.Scope)).HandleConnect(goproxy.AlwaysMitm)
 	p.Server.OnRequest(goproxy.UrlMatches(p.Scope)).DoFunc(p.HandleRequest)
 	p.Server.OnResponse(goproxy.UrlMatches(p.Scope)).DoFunc(p.HandleResponse)
+
+	if upstream != nil {
+		u := http.ProxyURL(upstream)
+		p.Server.Tr.Proxy = u
+	}
 
 	return http.ListenAndServe(host, p.Server)
 }
