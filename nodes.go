@@ -23,6 +23,7 @@ func NewHttpReqDir(req *http.Request) *fusebox.Dir {
 	d.AddNode("proto", fusebox.NewStringFile(&req.Proto))
 	d.AddNode("close", fusebox.NewBoolFile(&req.Close))
 	d.AddNode("host", fusebox.NewStringFile(&req.Host))
+	d.AddNode("headers", NewHTTPHeaderDir(req.Header))
 
 	reqNode := fusebox.NewStringFile(&req.RequestURI)
 	reqNode.Mode = os.ModeDir | 04444
@@ -43,6 +44,7 @@ func NewProxyHttpRespDir(resp *http.Response) *fusebox.Dir {
 	d.AddNode("proto", fusebox.NewStringFile(&resp.Proto))
 	d.AddNode("close", fusebox.NewBoolFile(&resp.Close))
 	d.AddNode("req", NewHttpReqDir(resp.Request))
+	d.AddNode("headers", NewHTTPHeaderDir(resp.Header))
 
 	lenNode := fusebox.NewInt64File(&resp.ContentLength)
 	d.AddNode("contentlength", lenNode)
@@ -171,4 +173,17 @@ func (bf *HTTPBodyFile) Attr(ctx context.Context, attr *fuse.Attr) error {
 
 func (bf *HTTPBodyFile) Node() fusebox.VarNode {
 	return bf
+}
+
+// Returns a new Dir that exposes the headers of a request or response, with
+// the name of the contained files being the header names, and their contents
+// being the header values. For now this is limited to just the first string
+// for a given key in http.Header
+func NewHTTPHeaderDir(h http.Header) *fusebox.Dir {
+	d := fusebox.NewDir()
+	for k := range h {
+		d.AddNode(k, fusebox.NewStringFile(&h[k][0]))
+	}
+
+	return d
 }
