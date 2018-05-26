@@ -1,12 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
+	"net/http/httputil"
 	"sync"
 
 	"bazil.org/fuse"
@@ -14,9 +15,9 @@ import (
 	"github.com/gobuffalo/uuid"
 )
 
-// NewHttpReqDir returns a Dir that represents the values of a http.Request
+// NewHTTPReqDir returns a Dir that represents the values of a http.Request
 // object. By default, these values are readable and writeable.
-func NewHttpReqDir(req *http.Request) *fusebox.Dir {
+func NewHTTPReqDir(req *http.Request) *fusebox.Dir {
 	d := fusebox.NewDir()
 	d.AddNode("method", fusebox.NewStringFile(&req.Method))
 	d.AddNode("url", fusebox.NewURLFile(req.URL))
@@ -24,10 +25,8 @@ func NewHttpReqDir(req *http.Request) *fusebox.Dir {
 	d.AddNode("close", fusebox.NewBoolFile(&req.Close))
 	d.AddNode("host", fusebox.NewStringFile(&req.Host))
 	d.AddNode("headers", NewHTTPHeaderDir(req.Header))
-
-	reqNode := fusebox.NewStringFile(&req.RequestURI)
-	reqNode.Mode = os.ModeDir | 04444
-	d.AddNode("requrl", reqNode)
+	d.AddNode("raw", NewHTTPReqRawFile(req))
+	d.AddNode("requrl", fusebox.NewStringFile(&req.RequestURI))
 
 	lenNode := fusebox.NewInt64File(&req.ContentLength)
 	d.AddNode("contentlength", lenNode)
@@ -35,16 +34,17 @@ func NewHttpReqDir(req *http.Request) *fusebox.Dir {
 	return d
 }
 
-// NewHttpRespDir returns a Dir that represents the values of a http.Response
+// NewHTTPRespDir returns a Dir that represents the values of a http.Response
 // object. By default, these values are readable and writeable.
-func NewProxyHttpRespDir(resp *http.Response) *fusebox.Dir {
+func NewHTTPRespDir(resp *http.Response) *fusebox.Dir {
 	d := fusebox.NewDir()
 	d.AddNode("status", fusebox.NewStringFile(&resp.Status))
 	d.AddNode("statuscode", fusebox.NewIntFile(&resp.StatusCode))
 	d.AddNode("proto", fusebox.NewStringFile(&resp.Proto))
 	d.AddNode("close", fusebox.NewBoolFile(&resp.Close))
-	d.AddNode("req", NewHttpReqDir(resp.Request))
 	d.AddNode("headers", NewHTTPHeaderDir(resp.Header))
+	d.AddNode("raw", NewHTTPRespRawFile(resp))
+	d.AddNode("req", NewHTTPReqDir(resp.Request))
 
 	lenNode := fusebox.NewInt64File(&resp.ContentLength)
 	d.AddNode("contentlength", lenNode)
@@ -75,7 +75,7 @@ type ProxyResponses []ProxyResp
 // Interface implementations for ProxyReq and ProxyResp...
 
 func (pr ProxyRequests) GetNode(i int) fusebox.VarNode {
-	return NewHttpReqDir(pr[i].Req)
+	return NewHTTPReqDir(pr[i].Req)
 }
 
 func (ProxyRequests) GetDirentType(i int) fuse.DirentType {
@@ -87,7 +87,7 @@ func (pr ProxyRequests) Length() int {
 }
 
 func (pr ProxyResponses) GetNode(i int) fusebox.VarNode {
-	return NewProxyHttpRespDir(pr[i].Resp)
+	return NewHTTPRespDir(pr[i].Resp)
 }
 
 func (ProxyResponses) GetDirentType(i int) fuse.DirentType {
@@ -186,4 +186,113 @@ func NewHTTPHeaderDir(h http.Header) *fusebox.Dir {
 	}
 
 	return d
+}
+
+// A file that exposes a HTTP requests in its raw format for reading and editing.
+// For limitations on reading, see
+// https://godoc.org/net/http/httputil#DumpRequest
+type HTTPReqRawFile struct {
+	fusebox.File
+	Data *http.Request
+}
+
+// Return a HTTPReqRawFile for the given http.Request.
+func NewHTTPReqRawFile(req *http.Request) *HTTPReqRawFile {
+	ret := &HTTPReqRawFile{Data: req}
+	ret.Mode = 0666
+	ret.Lock = &sync.RWMutex{}
+	ret.ValRead = ret.valRead
+	ret.ValWrite = ret.valWrite
+	return ret
+}
+
+func (rf *HTTPReqRawFile) valRead(ctx context.Context) ([]byte, error) {
+	data, err := httputil.DumpRequest(rf.Data, true)
+	if err != nil {
+		return nil, fuse.ENODATA
+	}
+
+	return data, nil
+}
+
+func (rf *HTTPReqRawFile) valWrite(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	buf := bufio.NewReader(bytes.NewReader(req.Data))
+	httpReq, err := http.ReadRequest(buf)
+	if err != nil {
+		return fuse.ERANGE
+	}
+
+	*rf.Data = *httpReq
+	resp.Size = len(req.Data)
+	return nil
+}
+
+func (rf *HTTPReqRawFile) Attr(ctx context.Context, attr *fuse.Attr) error {
+	attr.Mode = rf.Mode
+
+	data, err := httputil.DumpRequest(rf.Data, true)
+	if err != nil {
+		return fuse.ENODATA
+	}
+
+	attr.Size = uint64(len(data))
+	return nil
+}
+
+func (rf *HTTPReqRawFile) Node() fusebox.VarNode {
+	return rf
+}
+
+// A file that exposes a HTTP response in it's raw format. The reading limitations
+// are the same as those for HTTPReqRawFile, which come from
+// https://godoc.org/net/http/httputil#DumpRequest
+type HTTPRespRawFile struct {
+	fusebox.File
+	Data *http.Response
+}
+
+// Return a new HTTPRespRawFile for the given http.Response
+func NewHTTPRespRawFile(resp *http.Response) *HTTPRespRawFile {
+	ret := &HTTPRespRawFile{Data: resp}
+	ret.Mode = 0666
+	ret.Lock = &sync.RWMutex{}
+	ret.ValRead = ret.valRead
+	ret.ValWrite = ret.valWrite
+	return ret
+}
+
+func (rf *HTTPRespRawFile) valRead(ctx context.Context) ([]byte, error) {
+	data, err := httputil.DumpResponse(rf.Data, true)
+	if err != nil {
+		return nil, fuse.ENODATA
+	}
+
+	return data, nil
+}
+
+func (rf *HTTPRespRawFile) valWrite(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	buf := bufio.NewReader(bytes.NewReader(req.Data))
+	httpResp, err := http.ReadResponse(buf, rf.Data.Request)
+	if err != nil {
+		return fuse.ERANGE
+	}
+
+	*rf.Data = *httpResp
+	resp.Size = len(req.Data)
+	return nil
+}
+
+func (rf *HTTPRespRawFile) Attr(ctx context.Context, attr *fuse.Attr) error {
+	attr.Mode = rf.Mode
+	data, err := httputil.DumpResponse(rf.Data, true)
+	if err != nil {
+		return fuse.ENODATA
+	}
+
+	attr.Size = uint64(len(data))
+	return nil
+}
+
+func (rf *HTTPRespRawFile) Node() fusebox.VarNode {
+	return rf
 }
