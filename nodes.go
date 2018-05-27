@@ -12,7 +12,7 @@ import (
 
 	"bazil.org/fuse"
 	"github.com/danielthatcher/fusebox"
-	"github.com/gobuffalo/uuid"
+	"github.com/satori/go.uuid"
 )
 
 // NewHTTPReqDir returns a Dir that represents the values of a http.Request

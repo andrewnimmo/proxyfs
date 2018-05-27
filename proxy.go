@@ -10,7 +10,7 @@ import (
 	"bazil.org/fuse/fs"
 	"github.com/danielthatcher/fusebox"
 	"github.com/elazarl/goproxy"
-	"github.com/gobuffalo/uuid"
+	"github.com/satori/go.uuid"
 )
 
 // Proxy can be used to setup a proxy server and a filesystem which can be used to control it
