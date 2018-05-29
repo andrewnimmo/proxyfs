@@ -55,13 +55,19 @@ func main() {
 	signal.Notify(c, os.Interrupt)
 	go func() {
 		<-c
-		fuse.Unmount(mountpoint)
+		if err := fuse.Unmount(mountpoint); err != nil {
+			log.Printf("Failed to properly unmount: %v\n", err)
+		}
 		os.Exit(1)
 	}()
 
 	// Actually run
-	go proxy.Mount(mountpoint)
-	bind := fmt.Sprintf("%v:%v", *bindHost, *bindPort)
+	go func() {
+		if err := proxy.Mount(mountpoint); err != nil {
+			log.Fatalf("Failed to mount: %v\n", err)
+		}
+	}()
 
+	bind := fmt.Sprintf("%v:%v", *bindHost, *bindPort)
 	log.Fatal(proxy.ListenAndServe(bind, upURL))
 }
