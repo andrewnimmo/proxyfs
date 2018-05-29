@@ -100,6 +100,8 @@ type ProxyResponses []ProxyResp
 
 // Interface implementations for ProxyReq and ProxyResp...
 
+var _ fusebox.VarNodeList = (*ProxyRequests)(nil)
+
 func (pr ProxyRequests) GetNode(i int) fusebox.VarNode {
 	d := NewHTTPReqDir(pr[i].Req)
 	d.AddNode("forward", fusebox.NewChanFile(pr[i].Wait))
@@ -110,9 +112,16 @@ func (ProxyRequests) GetDirentType(i int) fuse.DirentType {
 	return fuse.DT_Dir
 }
 
+func (pr ProxyRequests) Remove(i int) bool {
+	pr = append(pr[:i], pr[i+1:]...)
+	return true
+}
+
 func (pr ProxyRequests) Length() int {
 	return len(pr)
 }
+
+var _ fusebox.VarNodeList = (*ProxyResponses)(nil)
 
 func (pr ProxyResponses) GetNode(i int) fusebox.VarNode {
 	d := NewHTTPRespDir(pr[i].Resp)
@@ -122,6 +131,10 @@ func (pr ProxyResponses) GetNode(i int) fusebox.VarNode {
 
 func (ProxyResponses) GetDirentType(i int) fuse.DirentType {
 	return fuse.DT_Dir
+}
+
+func (pr ProxyResponses) Remove(i int) bool {
+	return false
 }
 
 func (pr ProxyResponses) Length() int {
