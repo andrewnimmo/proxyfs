@@ -25,7 +25,17 @@ func NewHTTPReqDir(req *http.Request) *fusebox.Dir {
 	d.AddNode("close", fusebox.NewBoolFile(&req.Close))
 	d.AddNode("host", fusebox.NewStringFile(&req.Host))
 	d.AddNode("headers", NewHTTPHeaderDir(req.Header))
-	d.AddNode("raw", NewHTTPReqRawFile(req))
+
+	r := NewHTTPReqRawFile(req)
+	d.AddNode("raw", r)
+	go func() {
+		for {
+			<-r.Change
+			r.Lock.RLock()
+			refreshHeaders(d, r.Data.Header)
+			r.Lock.RUnlock()
+		}
+	}()
 
 	d.AddNode("requrl", fusebox.NewStringFile(&req.RequestURI))
 
@@ -44,13 +54,28 @@ func NewHTTPRespDir(resp *http.Response) *fusebox.Dir {
 	d.AddNode("proto", fusebox.NewStringFile(&resp.Proto))
 	d.AddNode("close", fusebox.NewBoolFile(&resp.Close))
 	d.AddNode("headers", NewHTTPHeaderDir(resp.Header))
-	d.AddNode("raw", NewHTTPRespRawFile(resp))
 	d.AddNode("req", NewHTTPReqDir(resp.Request))
+
+	r := NewHTTPRespRawFile(resp)
+	d.AddNode("raw", r)
+	go func() {
+		for {
+			<-r.Change
+			r.Lock.RLock()
+			refreshHeaders(d, r.Data.Header)
+			r.Lock.RUnlock()
+		}
+	}()
 
 	lenNode := fusebox.NewInt64File(&resp.ContentLength)
 	d.AddNode("contentlength", lenNode)
 	d.AddNode("body", NewHTTPBodyFile(&resp.Body, lenNode))
 	return d
+}
+
+func refreshHeaders(d *fusebox.Dir, h http.Header) {
+	d.RemoveNode("headers")
+	d.AddNode("headers", NewHTTPHeaderDir(h))
 }
 
 // ProxyReq is a wrapper for a http.Request, and a channel used to control intercepting
@@ -206,6 +231,7 @@ func NewHTTPReqRawFile(req *http.Request) *HTTPReqRawFile {
 	ret := &HTTPReqRawFile{Data: req}
 	ret.Mode = 0666
 	ret.Lock = &sync.RWMutex{}
+	ret.Change = make(chan int)
 	ret.ValRead = ret.valRead
 	ret.ValWrite = ret.valWrite
 	return ret
@@ -261,6 +287,7 @@ func NewHTTPRespRawFile(resp *http.Response) *HTTPRespRawFile {
 	ret := &HTTPRespRawFile{Data: resp}
 	ret.Mode = 0666
 	ret.Lock = &sync.RWMutex{}
+	ret.Change = make(chan int)
 	ret.ValRead = ret.valRead
 	ret.ValWrite = ret.valWrite
 	return ret
