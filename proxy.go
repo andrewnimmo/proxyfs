@@ -52,8 +52,8 @@ func NewProxy(scope string) (*Proxy, error) {
 	// Intercept controls
 	reqNode := fusebox.NewBoolFile(&ret.InterceptRequests)
 	respNode := fusebox.NewBoolFile(&ret.InterceptResponses)
-	dir.AddNode("intercept_requests", reqNode)
-	dir.AddNode("intercept_responses", respNode)
+	dir.AddNode("intreq", reqNode)
+	dir.AddNode("intresp", respNode)
 
 	// Responses and requests
 	dir.AddNode("req", fusebox.NewSliceDir(&ret.Requests))
