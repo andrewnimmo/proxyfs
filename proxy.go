@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -87,14 +89,23 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 		panic("Couldn't create UUID!")
 	}
 
-	proxyResp := ProxyResp{Resp: r, Wait: make(chan int), ID: id}
+	proxyResp := ProxyResp{Resp: r,
+		Wait: make(chan int),
+		Drop: make(chan int),
+		ID:   id,
+	}
+
 	p.ResponsesLock.Lock()
 	p.Responses = append(p.Responses, proxyResp)
 	p.ResponsesLock.Unlock()
 
 	// Wait until forwarded
 	if p.InterceptResponses {
-		<-proxyResp.Wait
+		select {
+		case <-proxyResp.Wait:
+		case <-proxyResp.Drop:
+			r = droppedResponse(r.Request)
+		}
 	}
 
 	// Remove the response from the queue before returning
@@ -117,14 +128,24 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	if err != nil {
 		panic("Couldn't create UUID!")
 	}
-	proxyReq := ProxyReq{Req: r, Wait: make(chan int), ID: id}
+	proxyReq := ProxyReq{Req: r,
+		Wait: make(chan int),
+		Drop: make(chan int),
+		ID:   id,
+	}
+
 	p.RequestsLock.Lock()
 	p.Requests = append(p.Requests, proxyReq)
 	p.RequestsLock.Unlock()
 
 	// Wait until forwarded
+	var resp *http.Response
 	if p.InterceptRequests {
-		<-proxyReq.Wait
+		select {
+		case <-proxyReq.Wait:
+		case <-proxyReq.Drop:
+			resp = droppedResponse(r)
+		}
 	}
 
 	// Remove the request from the queue before returning
@@ -136,7 +157,7 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	}
 	p.RequestsLock.Unlock()
 
-	return r, nil
+	return r, resp
 }
 
 var _ fs.FS = (*Proxy)(nil)
@@ -186,5 +207,23 @@ func (p *Proxy) dispatchIntercepts(req <-chan int, resp <-chan int) {
 				}
 			}
 		}
+	}
+}
+
+// Create the response returned when a request or response is dropped.
+func droppedResponse(req *http.Request) *http.Response {
+	msg := "Dropped by proxyfs"
+	b := ioutil.NopCloser(bytes.NewBufferString(msg))
+	return &http.Response{
+		Status:        "500 Internal Server Error",
+		StatusCode:    http.StatusInternalServerError,
+		Body:          b,
+		Header:        make(map[string][]string, 0),
+		ContentLength: int64(len(msg)),
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Close:         true,
+		Request:       req,
 	}
 }

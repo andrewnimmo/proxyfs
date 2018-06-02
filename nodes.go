@@ -42,6 +42,9 @@ func NewHTTPReqDir(req *http.Request) *fusebox.Dir {
 	lenNode := fusebox.NewInt64File(&req.ContentLength)
 	d.AddNode("contentlength", lenNode)
 	d.AddNode("body", NewHTTPBodyFile(&req.Body, lenNode))
+
+	// Allow removing with "rm -r"
+	d.Rm = func(context.Context, *fuse.RemoveRequest) error { return nil }
 	return d
 }
 
@@ -70,6 +73,9 @@ func NewHTTPRespDir(resp *http.Response) *fusebox.Dir {
 	lenNode := fusebox.NewInt64File(&resp.ContentLength)
 	d.AddNode("contentlength", lenNode)
 	d.AddNode("body", NewHTTPBodyFile(&resp.Body, lenNode))
+
+	// Allow removing with "rm -r"
+	d.Rm = func(context.Context, *fuse.RemoveRequest) error { return nil }
 	return d
 }
 
@@ -82,6 +88,7 @@ func refreshHeaders(d *fusebox.Dir, h http.Header) {
 type ProxyReq struct {
 	Req  *http.Request
 	Wait chan int
+	Drop chan int
 	ID   uuid.UUID
 }
 
@@ -89,6 +96,7 @@ type ProxyReq struct {
 type ProxyResp struct {
 	Resp *http.Response
 	Wait chan int
+	Drop chan int
 	ID   uuid.UUID
 }
 
@@ -113,7 +121,7 @@ func (ProxyRequests) GetDirentType(i int) fuse.DirentType {
 }
 
 func (pr ProxyRequests) Remove(i int) bool {
-	pr = append(pr[:i], pr[i+1:]...)
+	pr[i].Drop <- 1
 	return true
 }
 
@@ -134,7 +142,8 @@ func (ProxyResponses) GetDirentType(i int) fuse.DirentType {
 }
 
 func (pr ProxyResponses) Remove(i int) bool {
-	return false
+	pr[i].Drop <- 1
+	return true
 }
 
 func (pr ProxyResponses) Length() int {
@@ -226,6 +235,11 @@ func NewHTTPHeaderDir(h http.Header) *fusebox.Dir {
 	d := fusebox.NewDir()
 	for k := range h {
 		d.AddNode(k, fusebox.NewStringFile(&h[k][0]))
+	}
+
+	// Allow removing with "rm -r"
+	d.Rm = func(context.Context, *fuse.RemoveRequest) error {
+		return nil
 	}
 
 	return d
