@@ -44,7 +44,9 @@ func (e *reqDirElement) GetNode(ctx context.Context, k string) (fusebox.VarNode,
 	case "host":
 		return fusebox.NewStringFile(&e.Data.Host), nil
 	case "headers":
-		return newHTTPHeaderDir(e.Data.Header), nil
+		d := newHTTPHeaderDir(&e.Data.Header)
+		d.OpenFlags = fuse.OpenDirectIO
+		return d, nil
 	case "raw":
 		return newHTTPReqRawFile(e.Data), nil
 	case "contentlength":
@@ -117,7 +119,7 @@ func (e *respDirElement) GetNode(ctx context.Context, k string) (fusebox.VarNode
 	case "close":
 		return fusebox.NewBoolFile(&e.Data.Close), nil
 	case "headers":
-		return newHTTPHeaderDir(e.Data.Header), nil
+		return newHTTPHeaderDir(&e.Data.Header), nil
 	case "req":
 		return newHTTPReqDir(e.Data.Request), nil
 	case "raw":
@@ -167,25 +169,12 @@ func newHTTPRespDir(resp *http.Response) *fusebox.Dir {
 	return ret
 }
 
-func refreshHeaders(d *fusebox.Dir, h http.Header) {
-	d.RemoveNode("headers")
-	d.AddNode("headers", newHTTPHeaderDir(h))
-}
-
 // proxyReq is a wrapper for a http.Request, and a channel used to control intercepting
 type proxyReq struct {
 	Req  *http.Request
 	Wait chan int
 	Drop chan int
 	ID   uuid.UUID
-}
-
-func (p *proxyReq) Node() fusebox.VarNode {
-	return newHTTPReqDir(p.Req)
-}
-
-func (proxyReq) DirentType() fuse.DirentType {
-	return fuse.DT_Dir
 }
 
 // proxyResp is a wrapper for a http.Response, and a channel used to control intercepting
@@ -246,17 +235,54 @@ func (bf *httpBodyFile) Size(context.Context) (uint64, error) {
 	return uint64(len(b)), nil
 }
 
+type headerElement struct {
+	Data *http.Header
+}
+
+func (e *headerElement) GetNode(ctx context.Context, k string) (fusebox.VarNode, error) {
+	h, ok := (*e.Data)[k]
+	if !ok {
+		return nil, fuse.ENOENT
+	}
+	ret := fusebox.NewStringFile(&h[0])
+	ret.OpenFlags = fuse.OpenDirectIO
+	return ret, nil
+}
+
+func (e *headerElement) GetDirentType(ctx context.Context, k string) (fuse.DirentType, error) {
+	_, ok := (*e.Data)[k]
+	if !ok {
+		return fuse.DT_Unknown, fuse.ENOENT
+	}
+
+	return fuse.DT_File, nil
+}
+
+func (e *headerElement) GetKeys(ctx context.Context) []string {
+	ret := make([]string, len(*e.Data))
+	i := 0
+	for k := range *e.Data {
+		ret[i] = k
+		i++
+	}
+
+	return ret
+}
+func (e *headerElement) AddNode(name string, node interface{}) error {
+	return fuse.EPERM
+}
+func (e *headerElement) RemoveNode(name string) error {
+	return fuse.EPERM
+}
+
 // Returns a new Dir that exposes the headers of a request or response, with
 // the name of the contained files being the header names, and their contents
 // being the header values. For now this is limited to just the first string
 // for a given key in http.Header
-func newHTTPHeaderDir(h http.Header) *fusebox.Dir {
-	d := fusebox.NewEmptyDir()
-	for k := range h {
-		d.AddNode(k, fusebox.NewStringFile(&h[k][0]))
-	}
-
-	return d
+func newHTTPHeaderDir(h *http.Header) *fusebox.Dir {
+	ret := fusebox.NewDir(&headerElement{h})
+	ret.Mode = os.ModeDir | 0444
+	return ret
 }
 
 // A file that exposes a HTTP requests in its raw format for reading and editing.
@@ -268,7 +294,9 @@ type httpReqRawFile struct {
 
 // Return a HTTPReqRawFile for the given http.Request.
 func newHTTPReqRawFile(req *http.Request) *fusebox.File {
-	return fusebox.NewFile(&httpReqRawFile{Data: req})
+	ret := fusebox.NewFile(&httpReqRawFile{Data: req})
+	ret.OpenFlags = fuse.OpenDirectIO
+	return ret
 }
 
 func (rf *httpReqRawFile) ValRead(ctx context.Context) ([]byte, error) {
