@@ -23,8 +23,8 @@ type Proxy struct {
 	FuseConn           *fuse.Conn
 	InterceptRequests  bool
 	InterceptResponses bool
-	Requests           ProxyRequests
-	Responses          ProxyResponses
+	Requests           []proxyReq
+	Responses          []proxyResp
 	RequestsLock       *sync.RWMutex
 	ResponsesLock      *sync.RWMutex
 }
@@ -38,13 +38,13 @@ func NewProxy(scope string) (*Proxy, error) {
 
 	server := goproxy.NewProxyHttpServer()
 
-	dir := fusebox.NewDir()
+	dir := fusebox.NewEmptyDir()
 	ret := &Proxy{
 		Server:        server,
 		RootDir:       dir,
 		Scope:         r,
-		Requests:      make(ProxyRequests, 0),
-		Responses:     make(ProxyResponses, 0),
+		Requests:      make([]proxyReq, 0),
+		Responses:     make([]proxyResp, 0),
 		RequestsLock:  &sync.RWMutex{},
 		ResponsesLock: &sync.RWMutex{},
 	}
@@ -58,8 +58,11 @@ func NewProxy(scope string) (*Proxy, error) {
 	dir.AddNode("intresp", respNode)
 
 	// Responses and requests
-	dir.AddNode("req", fusebox.NewSliceDir(&ret.Requests))
-	dir.AddNode("resp", fusebox.NewSliceDir(&ret.Responses))
+	//TODO
+	/*
+		dir.AddNode("req", fusebox.NewSliceDir(&ret.Requests))
+		dir.AddNode("resp", fusebox.NewSliceDir(&ret.Responses))
+	*/
 
 	go ret.dispatchIntercepts(reqNode.Change, respNode.Change)
 
@@ -89,21 +92,21 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 		panic("Couldn't create UUID!")
 	}
 
-	proxyResp := ProxyResp{Resp: r,
+	pr := proxyResp{Resp: r,
 		Wait: make(chan int),
 		Drop: make(chan int),
 		ID:   id,
 	}
 
 	p.ResponsesLock.Lock()
-	p.Responses = append(p.Responses, proxyResp)
+	p.Responses = append(p.Responses, pr)
 	p.ResponsesLock.Unlock()
 
 	// Wait until forwarded
 	if p.InterceptResponses {
 		select {
-		case <-proxyResp.Wait:
-		case <-proxyResp.Drop:
+		case <-pr.Wait:
+		case <-pr.Drop:
 			r = droppedResponse(r.Request)
 		}
 	}
@@ -111,7 +114,7 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 	// Remove the response from the queue before returning
 	p.ResponsesLock.Lock()
 	for i, x := range p.Responses {
-		if x.ID == proxyResp.ID {
+		if x.ID == pr.ID {
 			p.Responses = append(p.Responses[:i], p.Responses[i+1:]...)
 			break
 		}
@@ -128,22 +131,22 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	if err != nil {
 		panic("Couldn't create UUID!")
 	}
-	proxyReq := ProxyReq{Req: r,
+	pr := proxyReq{Req: r,
 		Wait: make(chan int),
 		Drop: make(chan int),
 		ID:   id,
 	}
 
 	p.RequestsLock.Lock()
-	p.Requests = append(p.Requests, proxyReq)
+	p.Requests = append(p.Requests, pr)
 	p.RequestsLock.Unlock()
 
 	// Wait until forwarded
 	var resp *http.Response
 	if p.InterceptRequests {
 		select {
-		case <-proxyReq.Wait:
-		case <-proxyReq.Drop:
+		case <-pr.Wait:
+		case <-pr.Drop:
 			resp = droppedResponse(r)
 		}
 	}
@@ -151,7 +154,7 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	// Remove the request from the queue before returning
 	p.RequestsLock.Lock()
 	for i, x := range p.Requests {
-		if x.ID == proxyReq.ID {
+		if x.ID == pr.ID {
 			p.Requests = append(p.Requests[:i], p.Requests[i+1:]...)
 		}
 	}
