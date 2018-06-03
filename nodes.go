@@ -8,75 +8,163 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
+	"os"
 
 	"bazil.org/fuse"
 	"github.com/danielthatcher/fusebox"
 	"github.com/satori/go.uuid"
 )
 
-// NewHTTPReqDir returns a Dir that represents the values of a http.Request
-// object. By default, these values are readable and writeable.
-func NewHTTPReqDir(req *http.Request) *fusebox.Dir {
-	d := fusebox.NewEmptyDir()
-	d.AddNode("method", fusebox.NewStringFile(&req.Method))
-	d.AddNode("url", fusebox.NewURLFile(req.URL))
-	d.AddNode("proto", fusebox.NewStringFile(&req.Proto))
-	d.AddNode("close", fusebox.NewBoolFile(&req.Close))
-	d.AddNode("host", fusebox.NewStringFile(&req.Host))
-	d.AddNode("headers", newHTTPHeaderDir(req.Header))
-
-	r := newHTTPReqRawFile(req)
-	d.AddNode("raw", r)
-
-	go func() {
-		for {
-			<-r.Change
-			r.Lock.RLock()
-			refreshHeaders(d, req.Header)
-			r.Lock.RUnlock()
-		}
-	}()
-
-	d.AddNode("requrl", fusebox.NewStringFile(&req.RequestURI))
-
-	lenNode := fusebox.NewInt64File(&req.ContentLength)
-	d.AddNode("contentlength", lenNode)
-	d.AddNode("body", newHTTPBodyFile(&req.Body, &req.ContentLength))
-
-	// Allow removing with "rm -r"
-	// TODO: allow removing
-	return d
+type reqDirElement struct {
+	Data  *http.Request
+	files []string
+	dirs  []string
 }
 
-// NewHTTPRespDir returns a Dir that represents the values of a http.Response
-// object. By default, these values are readable and writeable.
-func NewHTTPRespDir(resp *http.Response) *fusebox.Dir {
-	d := fusebox.NewEmptyDir()
-	d.AddNode("status", fusebox.NewStringFile(&resp.Status))
-	d.AddNode("statuscode", fusebox.NewIntFile(&resp.StatusCode))
-	d.AddNode("proto", fusebox.NewStringFile(&resp.Proto))
-	d.AddNode("close", fusebox.NewBoolFile(&resp.Close))
-	d.AddNode("headers", newHTTPHeaderDir(resp.Header))
-	d.AddNode("req", NewHTTPReqDir(resp.Request))
+func newReqDirElement(req *http.Request) *reqDirElement {
+	return &reqDirElement{
+		Data:  req,
+		files: []string{"method", "url", "proto", "close", "host", "raw", "contentlength", "body"},
+		dirs:  []string{"headers"},
+	}
+}
 
-	r := newHTTPRespRawFile(resp)
-	d.AddNode("raw", r)
-	go func() {
-		for {
-			<-r.Change
-			r.Lock.RLock()
-			refreshHeaders(d, resp.Header)
-			r.Lock.RUnlock()
+func (e *reqDirElement) GetNode(ctx context.Context, k string) (fusebox.VarNode, error) {
+	switch k {
+	case "method":
+		return fusebox.NewStringFile(&e.Data.Method), nil
+	case "url":
+		return fusebox.NewURLFile(e.Data.URL), nil
+	case "requrl":
+		return fusebox.NewStringFile(&e.Data.RequestURI), nil
+	case "proto":
+		return fusebox.NewStringFile(&e.Data.Proto), nil
+	case "close":
+		return fusebox.NewBoolFile(&e.Data.Close), nil
+	case "host":
+		return fusebox.NewStringFile(&e.Data.Host), nil
+	case "headers":
+		return newHTTPHeaderDir(e.Data.Header), nil
+	case "raw":
+		return newHTTPReqRawFile(e.Data), nil
+	case "contentlength":
+		return fusebox.NewInt64File(&e.Data.ContentLength), nil
+	case "body":
+		return newHTTPBodyFile(&e.Data.Body), nil
+	}
+
+	return nil, fuse.ENOENT
+}
+
+func (e *reqDirElement) GetDirentType(ctx context.Context, k string) (fuse.DirentType, error) {
+	for _, v := range e.dirs {
+		if k == v {
+			return fuse.DT_Dir, nil
 		}
-	}()
+	}
 
-	lenNode := fusebox.NewInt64File(&resp.ContentLength)
-	d.AddNode("contentlength", lenNode)
-	d.AddNode("body", newHTTPBodyFile(&resp.Body, &resp.ContentLength))
+	for _, v := range e.files {
+		if k == v {
+			return fuse.DT_File, nil
+		}
+	}
 
-	// Allow removing with "rm -r"
-	// TODO: allow removing
-	return d
+	return fuse.DT_Unknown, fuse.ENOENT
+}
+
+func (e *reqDirElement) GetKeys(ctx context.Context) []string {
+	return append(e.files, e.dirs...)
+}
+
+func (*reqDirElement) AddNode(name string, node interface{}) error {
+	return fuse.EPERM
+}
+
+func (*reqDirElement) RemoveNode(name string) error {
+	return fuse.EPERM
+}
+
+// newHTTPReqDir returns a Dir that represents the values of a http.Request
+// object. By default, these values are readable and writeable.
+func newHTTPReqDir(req *http.Request) *fusebox.Dir {
+	ret := fusebox.NewDir(newReqDirElement(req))
+	ret.Mode = os.ModeDir | 0444
+	return ret
+}
+
+type respDirElement struct {
+	Data  *http.Response
+	files []string
+	dirs  []string
+}
+
+func newRespDirElement(resp *http.Response) *respDirElement {
+	return &respDirElement{
+		Data:  resp,
+		files: []string{"status", "statuscode", "proto", "close", "raw", "contentlength", "body"},
+		dirs:  []string{"headers", "req"},
+	}
+}
+
+func (e *respDirElement) GetNode(ctx context.Context, k string) (fusebox.VarNode, error) {
+	switch k {
+	case "status":
+		return fusebox.NewStringFile(&e.Data.Status), nil
+	case "statuscode":
+		return fusebox.NewIntFile(&e.Data.StatusCode), nil
+	case "proto":
+		return fusebox.NewStringFile(&e.Data.Proto), nil
+	case "close":
+		return fusebox.NewBoolFile(&e.Data.Close), nil
+	case "headers":
+		return newHTTPHeaderDir(e.Data.Header), nil
+	case "req":
+		return newHTTPReqDir(e.Data.Request), nil
+	case "raw":
+		return newHTTPRespRawFile(e.Data), nil
+	case "contentlength":
+		return fusebox.NewInt64File(&e.Data.ContentLength), nil
+	case "body":
+		return newHTTPBodyFile(&e.Data.Body), nil
+	}
+
+	return nil, fuse.ENOENT
+}
+
+func (e *respDirElement) GetDirentType(ctx context.Context, k string) (fuse.DirentType, error) {
+	for _, v := range e.dirs {
+		if k == v {
+			return fuse.DT_Dir, nil
+		}
+	}
+
+	for _, v := range e.files {
+		if k == v {
+			return fuse.DT_File, nil
+		}
+	}
+
+	return fuse.DT_Unknown, fuse.ENOENT
+}
+
+func (e *respDirElement) GetKeys(ctx context.Context) []string {
+	return append(e.files, e.dirs...)
+}
+
+func (*respDirElement) AddNode(name string, node interface{}) error {
+	return fuse.EPERM
+}
+
+func (*respDirElement) RemoveNode(name string) error {
+	return fuse.EPERM
+}
+
+// newHTTPRespDir returns a Dir that represents the values of a http.Response
+// object. By default, these values are readable and writeable.
+func newHTTPRespDir(resp *http.Response) *fusebox.Dir {
+	ret := fusebox.NewDir(newRespDirElement(resp))
+	ret.Mode = os.ModeDir | 0444
+	return ret
 }
 
 func refreshHeaders(d *fusebox.Dir, h http.Header) {
@@ -93,7 +181,7 @@ type proxyReq struct {
 }
 
 func (p *proxyReq) Node() fusebox.VarNode {
-	return NewHTTPReqDir(p.Req)
+	return newHTTPReqDir(p.Req)
 }
 
 func (proxyReq) DirentType() fuse.DirentType {
@@ -111,17 +199,14 @@ type proxyResp struct {
 // Provides a node for reading a writing the http body, and updating the content length
 // to match the body.
 type httpBodyFile struct {
-	// Stored so that the content length can be updated when the body changes.
-	ContentLength *int64
-
 	// A pointer to the actual Request or Response's body
 	Body *io.ReadCloser
 }
 
 // Returns a new HTTPBodyFile that exposes and updates the given body, as well as
 // automatically updating the given content length.
-func newHTTPBodyFile(body *io.ReadCloser, length *int64) *fusebox.File {
-	return fusebox.NewFile(&httpBodyFile{ContentLength: length, Body: body})
+func newHTTPBodyFile(body *io.ReadCloser) *fusebox.File {
+	return fusebox.NewFile(&httpBodyFile{body})
 }
 
 // Read a copy of the body, and replace the original reader with a fresh one to allow
@@ -148,7 +233,6 @@ func (bf *httpBodyFile) ValWrite(ctx context.Context, req *fuse.WriteRequest, re
 	// Update the data
 	b := bytes.TrimSpace(req.Data)
 	*bf.Body = ioutil.NopCloser(bytes.NewBuffer(b))
-	*bf.ContentLength = int64(len(b))
 
 	resp.Size = len(req.Data)
 	return nil

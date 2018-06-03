@@ -106,7 +106,7 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 
 	p.ResponsesLock.Lock()
 	p.Responses = append(p.Responses, pr)
-	p.RespNodes = append(p.RespNodes, NewHTTPRespDir(pr.Resp))
+	p.RespNodes = append(p.RespNodes, newHTTPRespDir(pr.Resp))
 	p.ResponsesLock.Unlock()
 
 	// Wait until forwarded
@@ -147,7 +147,7 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 
 	p.RequestsLock.Lock()
 	p.Requests = append(p.Requests, pr)
-	p.ReqNodes = append(p.ReqNodes, NewHTTPReqDir(pr.Req))
+	p.ReqNodes = append(p.ReqNodes, newHTTPReqDir(pr.Req))
 	p.RequestsLock.Unlock()
 
 	// Wait until forwarded
