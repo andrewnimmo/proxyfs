@@ -17,20 +17,20 @@ import (
 
 // Proxy can be used to setup a proxy server and a filesystem which can be used to control it
 type Proxy struct {
-	Server             *goproxy.ProxyHttpServer
-	Scope              *regexp.Regexp
-	RootDir            *fusebox.Dir
-	FuseConn           *fuse.Conn
-	InterceptRequests  bool
-	InterceptResponses bool
-	ReqDir             *fusebox.Dir
-	RespDir            *fusebox.Dir
-	ReqNodes           []fusebox.VarNodeable
-	RespNodes          []fusebox.VarNodeable
-	Requests           []proxyReq
-	Responses          []proxyResp
-	RequestsLock       *sync.RWMutex
-	ResponsesLock      *sync.RWMutex
+	Server    *goproxy.ProxyHttpServer
+	Scope     *regexp.Regexp
+	RootDir   *fusebox.Dir
+	FuseConn  *fuse.Conn
+	IntReq    bool
+	IntResp   bool
+	ReqDir    *fusebox.Dir
+	RespDir   *fusebox.Dir
+	ReqNodes  []fusebox.VarNodeable
+	RespNodes []fusebox.VarNodeable
+	Requests  []proxyReq
+	Responses []proxyResp
+	reqMu     *sync.RWMutex
+	respMu    *sync.RWMutex
 }
 
 // NewProxy returns a new proxy, compiling the given scope to a regexp
@@ -44,15 +44,15 @@ func NewProxy(scope string) (*Proxy, error) {
 
 	dir := fusebox.NewEmptyDir()
 	ret := &Proxy{
-		Server:        server,
-		RootDir:       dir,
-		Scope:         r,
-		ReqNodes:      make([]fusebox.VarNodeable, 0),
-		RespNodes:     make([]fusebox.VarNodeable, 0),
-		Requests:      make([]proxyReq, 0),
-		Responses:     make([]proxyResp, 0),
-		RequestsLock:  &sync.RWMutex{},
-		ResponsesLock: &sync.RWMutex{},
+		Server:    server,
+		RootDir:   dir,
+		Scope:     r,
+		ReqNodes:  make([]fusebox.VarNodeable, 0),
+		RespNodes: make([]fusebox.VarNodeable, 0),
+		Requests:  make([]proxyReq, 0),
+		Responses: make([]proxyResp, 0),
+		reqMu:     &sync.RWMutex{},
+		respMu:    &sync.RWMutex{},
 	}
 
 	ret.ReqDir = fusebox.NewSliceDir(&ret.ReqNodes)
@@ -61,8 +61,8 @@ func NewProxy(scope string) (*Proxy, error) {
 	dir.AddNode("scope", fusebox.NewRegexpFile(ret.Scope))
 
 	// Intercept controls
-	reqNode := fusebox.NewBoolFile(&ret.InterceptRequests)
-	respNode := fusebox.NewBoolFile(&ret.InterceptResponses)
+	reqNode := fusebox.NewBoolFile(&ret.IntReq)
+	respNode := fusebox.NewBoolFile(&ret.IntResp)
 	dir.AddNode("intreq", reqNode)
 	dir.AddNode("intresp", respNode)
 
@@ -99,27 +99,27 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 	}
 
 	pr := proxyResp{Resp: r,
-		Wait: make(chan int),
-		Drop: make(chan int),
-		ID:   id,
+		Forward: make(chan int),
+		Drop:    make(chan int),
+		ID:      id,
 	}
 
-	p.ResponsesLock.Lock()
+	p.respMu.Lock()
 	p.Responses = append(p.Responses, pr)
-	p.RespNodes = append(p.RespNodes, newHTTPRespDir(pr.Resp))
-	p.ResponsesLock.Unlock()
+	p.RespNodes = append(p.RespNodes, newHTTPRespDir(pr.Resp, pr.Forward, pr.Drop))
+	p.respMu.Unlock()
 
 	// Wait until forwarded
-	if p.InterceptResponses {
+	if p.IntResp {
 		select {
-		case <-pr.Wait:
+		case <-pr.Forward:
 		case <-pr.Drop:
 			r = droppedResponse(r.Request)
 		}
 	}
 
 	// Remove the response from the queue before returning
-	p.ResponsesLock.Lock()
+	p.respMu.Lock()
 	for i, x := range p.Responses {
 		if x.ID == pr.ID {
 			p.Responses = append(p.Responses[:i], p.Responses[i+1:]...)
@@ -127,7 +127,7 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 			break
 		}
 	}
-	p.ResponsesLock.Unlock()
+	p.respMu.Unlock()
 
 	return r
 }
@@ -140,35 +140,35 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 		panic("Couldn't create UUID!")
 	}
 	pr := proxyReq{Req: r,
-		Wait: make(chan int),
-		Drop: make(chan int),
-		ID:   id,
+		Forward: make(chan int),
+		Drop:    make(chan int),
+		ID:      id,
 	}
 
-	p.RequestsLock.Lock()
+	p.reqMu.Lock()
 	p.Requests = append(p.Requests, pr)
-	p.ReqNodes = append(p.ReqNodes, newHTTPReqDir(pr.Req))
-	p.RequestsLock.Unlock()
+	p.ReqNodes = append(p.ReqNodes, newHTTPReqDir(pr.Req, pr.Forward, pr.Drop))
+	p.reqMu.Unlock()
 
 	// Wait until forwarded
 	var resp *http.Response
-	if p.InterceptRequests {
+	if p.IntReq {
 		select {
-		case <-pr.Wait:
+		case <-pr.Forward:
 		case <-pr.Drop:
 			resp = droppedResponse(r)
 		}
 	}
 
 	// Remove the request from the queue before returning
-	p.RequestsLock.Lock()
+	p.reqMu.Lock()
 	for i, x := range p.Requests {
 		if x.ID == pr.ID {
 			p.Requests = append(p.Requests[:i], p.Requests[i+1:]...)
 			p.ReqNodes = append(p.ReqNodes[:i], p.ReqNodes[i+1:]...)
 		}
 	}
-	p.RequestsLock.Unlock()
+	p.reqMu.Unlock()
 
 	return r, resp
 }
@@ -208,15 +208,15 @@ func (p *Proxy) dispatchIntercepts(req <-chan int, resp <-chan int) {
 	for {
 		select {
 		case <-req:
-			if !p.InterceptRequests {
+			if !p.IntReq {
 				for _, r := range p.Requests {
-					r.Wait <- 1
+					r.Forward <- 1
 				}
 			}
 		case <-resp:
-			if !p.InterceptResponses {
+			if !p.IntResp {
 				for _, r := range p.Responses {
-					r.Wait <- 1
+					r.Forward <- 1
 				}
 			}
 		}

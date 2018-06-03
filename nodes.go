@@ -16,16 +16,20 @@ import (
 )
 
 type reqDirElement struct {
-	Data  *http.Request
-	files []string
-	dirs  []string
+	Data    *http.Request
+	files   []string
+	dirs    []string
+	forward chan int
+	drop    chan int
 }
 
-func newReqDirElement(req *http.Request) *reqDirElement {
+func newReqDirElement(req *http.Request, forward, drop chan int) *reqDirElement {
 	return &reqDirElement{
-		Data:  req,
-		files: []string{"method", "url", "proto", "close", "host", "raw", "contentlength", "body"},
-		dirs:  []string{"headers"},
+		Data:    req,
+		files:   []string{"method", "url", "proto", "close", "host", "raw", "contentlength", "body", "forward"},
+		dirs:    []string{"headers"},
+		forward: forward,
+		drop:    drop,
 	}
 }
 
@@ -53,6 +57,8 @@ func (e *reqDirElement) GetNode(ctx context.Context, k string) (fusebox.VarNode,
 		return fusebox.NewInt64File(&e.Data.ContentLength), nil
 	case "body":
 		return newHTTPBodyFile(&e.Data.Body), nil
+	case "forward":
+		return fusebox.NewChanFile(e.forward), nil
 	}
 
 	return nil, fuse.ENOENT
@@ -88,23 +94,27 @@ func (*reqDirElement) RemoveNode(name string) error {
 
 // newHTTPReqDir returns a Dir that represents the values of a http.Request
 // object. By default, these values are readable and writeable.
-func newHTTPReqDir(req *http.Request) *fusebox.Dir {
-	ret := fusebox.NewDir(newReqDirElement(req))
+func newHTTPReqDir(req *http.Request, forward, drop chan int) *fusebox.Dir {
+	ret := fusebox.NewDir(newReqDirElement(req, forward, drop))
 	ret.Mode = os.ModeDir | 0444
 	return ret
 }
 
 type respDirElement struct {
-	Data  *http.Response
-	files []string
-	dirs  []string
+	Data    *http.Response
+	files   []string
+	dirs    []string
+	forward chan int
+	drop    chan int
 }
 
-func newRespDirElement(resp *http.Response) *respDirElement {
+func newRespDirElement(resp *http.Response, forward, drop chan int) *respDirElement {
 	return &respDirElement{
-		Data:  resp,
-		files: []string{"status", "statuscode", "proto", "close", "raw", "contentlength", "body"},
-		dirs:  []string{"headers", "req"},
+		Data:    resp,
+		files:   []string{"status", "statuscode", "proto", "close", "raw", "contentlength", "body", "forward"},
+		dirs:    []string{"headers", "req"},
+		forward: forward,
+		drop:    drop,
 	}
 }
 
@@ -119,15 +129,19 @@ func (e *respDirElement) GetNode(ctx context.Context, k string) (fusebox.VarNode
 	case "close":
 		return fusebox.NewBoolFile(&e.Data.Close), nil
 	case "headers":
-		return newHTTPHeaderDir(&e.Data.Header), nil
+		ret := newHTTPHeaderDir(&e.Data.Header)
+		ret.OpenFlags = fuse.OpenDirectIO
+		return ret, nil
 	case "req":
-		return newHTTPReqDir(e.Data.Request), nil
+		return newHTTPReqDir(e.Data.Request, nil, nil), nil
 	case "raw":
 		return newHTTPRespRawFile(e.Data), nil
 	case "contentlength":
 		return fusebox.NewInt64File(&e.Data.ContentLength), nil
 	case "body":
 		return newHTTPBodyFile(&e.Data.Body), nil
+	case "forward":
+		return fusebox.NewChanFile(e.forward), nil
 	}
 
 	return nil, fuse.ENOENT
@@ -163,26 +177,26 @@ func (*respDirElement) RemoveNode(name string) error {
 
 // newHTTPRespDir returns a Dir that represents the values of a http.Response
 // object. By default, these values are readable and writeable.
-func newHTTPRespDir(resp *http.Response) *fusebox.Dir {
-	ret := fusebox.NewDir(newRespDirElement(resp))
+func newHTTPRespDir(resp *http.Response, forward, drop chan int) *fusebox.Dir {
+	ret := fusebox.NewDir(newRespDirElement(resp, forward, drop))
 	ret.Mode = os.ModeDir | 0444
 	return ret
 }
 
 // proxyReq is a wrapper for a http.Request, and a channel used to control intercepting
 type proxyReq struct {
-	Req  *http.Request
-	Wait chan int
-	Drop chan int
-	ID   uuid.UUID
+	Req     *http.Request
+	Forward chan int
+	Drop    chan int
+	ID      uuid.UUID
 }
 
 // proxyResp is a wrapper for a http.Response, and a channel used to control intercepting
 type proxyResp struct {
-	Resp *http.Response
-	Wait chan int
-	Drop chan int
-	ID   uuid.UUID
+	Resp    *http.Response
+	Forward chan int
+	Drop    chan int
+	ID      uuid.UUID
 }
 
 // Provides a node for reading a writing the http body, and updating the content length
@@ -338,7 +352,9 @@ type httpRespRawFile struct {
 
 // Return a new HTTPRespRawFile for the given http.Response
 func newHTTPRespRawFile(resp *http.Response) *fusebox.File {
-	return fusebox.NewFile(&httpRespRawFile{Data: resp})
+	ret := fusebox.NewFile(&httpRespRawFile{Data: resp})
+	ret.OpenFlags = fuse.OpenDirectIO
+	return ret
 }
 
 func (rf *httpRespRawFile) ValRead(ctx context.Context) ([]byte, error) {
