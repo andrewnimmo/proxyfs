@@ -27,15 +27,15 @@ func NewHTTPReqDir(req *http.Request) *fusebox.Dir {
 
 	r := newHTTPReqRawFile(req)
 	d.AddNode("raw", r)
-	/*
-		go func() {
-			for {
-				<-r.Change
-				r.Lock.RLock()
-				refreshHeaders(d, r.Elem.Data.Header)
-				r.Lock.RUnlock()
-			}
-		}()*/
+
+	go func() {
+		for {
+			<-r.Change
+			r.Lock.RLock()
+			refreshHeaders(d, req.Header)
+			r.Lock.RUnlock()
+		}
+	}()
 
 	d.AddNode("requrl", fusebox.NewStringFile(&req.RequestURI))
 
@@ -61,15 +61,14 @@ func NewHTTPRespDir(resp *http.Response) *fusebox.Dir {
 
 	r := newHTTPRespRawFile(resp)
 	d.AddNode("raw", r)
-	/*
-		go func() {
-			for {
-				<-r.Change
-				r.Lock.RLock()
-				refreshHeaders(d, r.Data.Header)
-				r.Lock.RUnlock()
-			}
-		}()*/
+	go func() {
+		for {
+			<-r.Change
+			r.Lock.RLock()
+			refreshHeaders(d, resp.Header)
+			r.Lock.RUnlock()
+		}
+	}()
 
 	lenNode := fusebox.NewInt64File(&resp.ContentLength)
 	d.AddNode("contentlength", lenNode)
