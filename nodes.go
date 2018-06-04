@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"strconv"
 
 	"bazil.org/fuse"
 	"github.com/danielthatcher/fusebox"
-	"github.com/satori/go.uuid"
 )
 
 type reqDirElement struct {
@@ -20,16 +20,14 @@ type reqDirElement struct {
 	files   []string
 	dirs    []string
 	forward chan int
-	drop    chan int
 }
 
-func newReqDirElement(req *http.Request, forward, drop chan int) *reqDirElement {
+func newReqDirElement(req *http.Request, forward chan int) *reqDirElement {
 	return &reqDirElement{
 		Data:    req,
 		files:   []string{"method", "url", "proto", "close", "host", "raw", "contentlength", "body", "forward"},
 		dirs:    []string{"headers"},
 		forward: forward,
-		drop:    drop,
 	}
 }
 
@@ -94,8 +92,8 @@ func (*reqDirElement) RemoveNode(name string) error {
 
 // newHTTPReqDir returns a Dir that represents the values of a http.Request
 // object. By default, these values are readable and writeable.
-func newHTTPReqDir(req *http.Request, forward, drop chan int) *fusebox.Dir {
-	ret := fusebox.NewDir(newReqDirElement(req, forward, drop))
+func newHTTPReqDir(req *http.Request, forward chan int) *fusebox.Dir {
+	ret := fusebox.NewDir(newReqDirElement(req, forward))
 	ret.Mode = os.ModeDir | 0444
 	return ret
 }
@@ -105,16 +103,14 @@ type respDirElement struct {
 	files   []string
 	dirs    []string
 	forward chan int
-	drop    chan int
 }
 
-func newRespDirElement(resp *http.Response, forward, drop chan int) *respDirElement {
+func newRespDirElement(resp *http.Response, forward chan int) *respDirElement {
 	return &respDirElement{
 		Data:    resp,
 		files:   []string{"status", "statuscode", "proto", "close", "raw", "contentlength", "body", "forward"},
 		dirs:    []string{"headers", "req"},
 		forward: forward,
-		drop:    drop,
 	}
 }
 
@@ -133,7 +129,7 @@ func (e *respDirElement) GetNode(ctx context.Context, k string) (fusebox.VarNode
 		ret.OpenFlags = fuse.OpenDirectIO
 		return ret, nil
 	case "req":
-		return newHTTPReqDir(e.Data.Request, nil, nil), nil
+		return newHTTPReqDir(e.Data.Request, nil), nil
 	case "raw":
 		return newHTTPRespRawFile(e.Data), nil
 	case "contentlength":
@@ -177,26 +173,101 @@ func (*respDirElement) RemoveNode(name string) error {
 
 // newHTTPRespDir returns a Dir that represents the values of a http.Response
 // object. By default, these values are readable and writeable.
-func newHTTPRespDir(resp *http.Response, forward, drop chan int) *fusebox.Dir {
-	ret := fusebox.NewDir(newRespDirElement(resp, forward, drop))
+func newHTTPRespDir(resp *http.Response, forward chan int) *fusebox.Dir {
+	ret := fusebox.NewDir(newRespDirElement(resp, forward))
 	ret.Mode = os.ModeDir | 0444
 	return ret
 }
 
-// proxyReq is a wrapper for a http.Request, and a channel used to control intercepting
-type proxyReq struct {
-	Req     *http.Request
-	Forward chan int
-	Drop    chan int
-	ID      uuid.UUID
+type reqListElement struct {
+	Data *[]proxyReq
 }
 
-// proxyResp is a wrapper for a http.Response, and a channel used to control intercepting
-type proxyResp struct {
-	Resp    *http.Response
-	Forward chan int
-	Drop    chan int
-	ID      uuid.UUID
+func (e *reqListElement) GetNode(ctx context.Context, k string) (fusebox.VarNode, error) {
+	i, err := strconv.Atoi(k)
+	if err != nil || i >= len(*e.Data) {
+		return nil, fuse.EPERM
+	}
+
+	return newHTTPReqDir((*e.Data)[i].Req, (*e.Data)[i].Forward), nil
+}
+
+func (*reqListElement) GetDirentType(ctx context.Context, k string) (fuse.DirentType, error) {
+	return fuse.DT_Dir, nil
+}
+
+func (e *reqListElement) GetKeys(ctx context.Context) []string {
+	ret := make([]string, len(*e.Data))
+	for i := range ret {
+		ret[i] = strconv.Itoa(i)
+	}
+
+	return ret
+}
+
+func (e *reqListElement) AddNode(name string, node interface{}) error {
+	return fuse.EPERM
+}
+
+func (e *reqListElement) RemoveNode(name string) error {
+	i, err := strconv.Atoi(name)
+	if err != nil || i >= len(*e.Data) {
+		return fuse.ENOENT
+	}
+
+	(*e.Data)[i].Drop <- 1
+	return nil
+}
+
+func newReqListDir(l *[]proxyReq) *fusebox.Dir {
+	ret := fusebox.NewDir(&reqListElement{l})
+	ret.Mode = os.ModeDir | 0444
+	return ret
+}
+
+type respListElement struct {
+	Data *[]proxyResp
+}
+
+func (e *respListElement) GetNode(ctx context.Context, k string) (fusebox.VarNode, error) {
+	i, err := strconv.Atoi(k)
+	if err != nil || i >= len(*e.Data) {
+		return nil, fuse.ENOENT
+	}
+
+	return newHTTPRespDir((*e.Data)[i].Resp, (*e.Data)[i].Forward), nil
+}
+
+func (*respListElement) GetDirentType(ctx context.Context, k string) (fuse.DirentType, error) {
+	return fuse.DT_Dir, nil
+}
+
+func (e *respListElement) GetKeys(ctx context.Context) []string {
+	ret := make([]string, len(*e.Data))
+	for i := range ret {
+		ret[i] = strconv.Itoa(i)
+	}
+	return ret
+}
+
+func (e *respListElement) AddNode(name string, node interface{}) error {
+	return fuse.EPERM
+}
+
+func (e *respListElement) RemoveNode(name string) error {
+	i, err := strconv.Atoi(name)
+	if err != nil || i >= len(*e.Data) {
+		return fuse.ENOENT
+	}
+
+	(*e.Data)[i].Drop <- 1
+	return nil
+}
+
+func newRespListDir(l *[]proxyResp) *fusebox.Dir {
+	ret := fusebox.NewDir(&respListElement{l})
+	ret.Mode = os.ModeDir | 0444
+	return ret
 }
 
 // Provides a node for reading a writing the http body, and updating the content length

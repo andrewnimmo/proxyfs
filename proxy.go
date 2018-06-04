@@ -23,14 +23,26 @@ type Proxy struct {
 	FuseConn  *fuse.Conn
 	IntReq    bool
 	IntResp   bool
-	ReqDir    *fusebox.Dir
-	RespDir   *fusebox.Dir
-	ReqNodes  []fusebox.VarNodeable
-	RespNodes []fusebox.VarNodeable
 	Requests  []proxyReq
 	Responses []proxyResp
 	reqMu     *sync.RWMutex
 	respMu    *sync.RWMutex
+}
+
+// proxyReq is a wrapper for a http.Request, and a channel used to control intercepting
+type proxyReq struct {
+	Req     *http.Request
+	Forward chan int
+	Drop    chan int
+	ID      uuid.UUID
+}
+
+// proxyResp is a wrapper for a http.Response, and a channel used to control intercepting
+type proxyResp struct {
+	Resp    *http.Response
+	Forward chan int
+	Drop    chan int
+	ID      uuid.UUID
 }
 
 // NewProxy returns a new proxy, compiling the given scope to a regexp
@@ -47,16 +59,15 @@ func NewProxy(scope string) (*Proxy, error) {
 		Server:    server,
 		RootDir:   dir,
 		Scope:     r,
-		ReqNodes:  make([]fusebox.VarNodeable, 0),
-		RespNodes: make([]fusebox.VarNodeable, 0),
 		Requests:  make([]proxyReq, 0),
 		Responses: make([]proxyResp, 0),
 		reqMu:     &sync.RWMutex{},
 		respMu:    &sync.RWMutex{},
 	}
 
-	ret.ReqDir = fusebox.NewSliceDir(&ret.ReqNodes)
-	ret.RespDir = fusebox.NewSliceDir(&ret.RespNodes)
+	//ret.ReqDir = fusebox.NewSliceDir(&ret.ReqNodes)
+	reqDir := newReqListDir(&ret.Requests)
+	respDir := newRespListDir(&ret.Responses)
 
 	dir.AddNode("scope", fusebox.NewRegexpFile(ret.Scope))
 
@@ -67,8 +78,8 @@ func NewProxy(scope string) (*Proxy, error) {
 	dir.AddNode("intresp", respNode)
 
 	// Responses and requests
-	dir.AddNode("req", ret.ReqDir)
-	dir.AddNode("resp", ret.RespDir)
+	dir.AddNode("req", reqDir)
+	dir.AddNode("resp", respDir)
 
 	go ret.dispatchIntercepts(reqNode.Change, respNode.Change)
 
@@ -106,7 +117,6 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 
 	p.respMu.Lock()
 	p.Responses = append(p.Responses, pr)
-	p.RespNodes = append(p.RespNodes, newHTTPRespDir(pr.Resp, pr.Forward, pr.Drop))
 	p.respMu.Unlock()
 
 	// Wait until forwarded
@@ -123,7 +133,6 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 	for i, x := range p.Responses {
 		if x.ID == pr.ID {
 			p.Responses = append(p.Responses[:i], p.Responses[i+1:]...)
-			p.RespNodes = append(p.RespNodes[:i], p.RespNodes[i+1:]...)
 			break
 		}
 	}
@@ -139,7 +148,8 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	if err != nil {
 		panic("Couldn't create UUID!")
 	}
-	pr := proxyReq{Req: r,
+	pr := proxyReq{
+		Req:     r,
 		Forward: make(chan int),
 		Drop:    make(chan int),
 		ID:      id,
@@ -147,7 +157,6 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 
 	p.reqMu.Lock()
 	p.Requests = append(p.Requests, pr)
-	p.ReqNodes = append(p.ReqNodes, newHTTPReqDir(pr.Req, pr.Forward, pr.Drop))
 	p.reqMu.Unlock()
 
 	// Wait until forwarded
@@ -165,7 +174,6 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	for i, x := range p.Requests {
 		if x.ID == pr.ID {
 			p.Requests = append(p.Requests[:i], p.Requests[i+1:]...)
-			p.ReqNodes = append(p.ReqNodes[:i], p.ReqNodes[i+1:]...)
 		}
 	}
 	p.reqMu.Unlock()
