@@ -8,8 +8,6 @@ import (
 	"regexp"
 	"sync"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
 	"github.com/danielthatcher/fusebox"
 	"github.com/elazarl/goproxy"
 	"github.com/satori/go.uuid"
@@ -19,8 +17,7 @@ import (
 type Proxy struct {
 	Server    *goproxy.ProxyHttpServer
 	Scope     *regexp.Regexp
-	RootDir   *fusebox.Dir
-	FuseConn  *fuse.Conn
+	FS        *fusebox.FS
 	IntReq    bool
 	IntResp   bool
 	Requests  []proxyReq
@@ -54,10 +51,8 @@ func NewProxy(scope string) (*Proxy, error) {
 
 	server := goproxy.NewProxyHttpServer()
 
-	dir := fusebox.NewEmptyDir()
 	ret := &Proxy{
 		Server:    server,
-		RootDir:   dir,
 		Scope:     r,
 		Requests:  make([]proxyReq, 0),
 		Responses: make([]proxyResp, 0),
@@ -65,21 +60,19 @@ func NewProxy(scope string) (*Proxy, error) {
 		respMu:    &sync.RWMutex{},
 	}
 
-	//ret.ReqDir = fusebox.NewSliceDir(&ret.ReqNodes)
-	reqDir := newReqListDir(&ret.Requests)
-	respDir := newRespListDir(&ret.Responses)
-
-	dir.AddNode("scope", fusebox.NewRegexpFile(ret.Scope))
+	fs, d := fusebox.NewEmptyFS()
+	ret.FS = fs
+	d.AddNode("scope", fusebox.NewRegexpFile(ret.Scope))
 
 	// Intercept controls
 	reqNode := fusebox.NewBoolFile(&ret.IntReq)
 	respNode := fusebox.NewBoolFile(&ret.IntResp)
-	dir.AddNode("intreq", reqNode)
-	dir.AddNode("intresp", respNode)
+	d.AddNode("intreq", reqNode)
+	d.AddNode("intresp", respNode)
 
 	// Responses and requests
-	dir.AddNode("req", reqDir)
-	dir.AddNode("resp", respDir)
+	d.AddNode("req", newReqListDir(&ret.Requests))
+	d.AddNode("resp", newRespListDir(&ret.Responses))
 
 	go ret.dispatchIntercepts(reqNode.Change, respNode.Change)
 
@@ -181,33 +174,9 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	return r, resp
 }
 
-var _ fs.FS = (*Proxy)(nil)
-
-// Root is implemented to comply with the fs.FS interface.
-// It returns a root node of the virtual and an error filesystem
-func (p *Proxy) Root() (fs.Node, error) {
-	return p.RootDir, nil
-}
-
 // Mount monuts the proxy's pseudo filesystem at the given path, returning any error encountered.
 func (p *Proxy) Mount(path string) error {
-	c, err := fuse.Mount(path, fuse.FSName("proxyfs"))
-	if err != nil {
-		return err
-	}
-	p.FuseConn = c
-
-	err = fs.Serve(p.FuseConn, p)
-	if err != nil {
-		return err
-	}
-
-	<-p.FuseConn.Ready
-	if err = c.MountError; err != nil {
-		return err
-	}
-
-	return nil
+	return p.FS.Mount(path)
 }
 
 // Listend for changes to p.InterceptRequests and p.InterceptResponses, and start/stop
