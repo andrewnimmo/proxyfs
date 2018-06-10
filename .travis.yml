@@ -1,0 +1,19 @@
+language: go
+go:
+    -1.10
+
+env:
+    global:
+        - GOARCH=amd64
+    matrix:
+        - GOOS=linux
+        - GOOS=darwin
+
+deploy:
+    provider: releases
+    api_key:
+        secure: lfH7hOxldwrLrm6VP1AOnDbUSUXj3HbyIsbsK1EQxizsMF4hRgxZEaf3Z31JVuf3Yk4sOJAupNRELZ6/UC/Pmeg/p9ucqx6m6XbMS/H3Q6Osu+8HTicxSPw6dn4QaCi3vJ/Jw5/+unfICOTxiYTx8oh7LWlcY7vbz3v7ZnMFgDAEgNlnd8DrQwEtCH63TaxYS40clF93Z7iHQXyjS/CcHqYE4y3jRhfm3qnfK7yxEH5qcgJtHvhUjTYSRZQ+QKUDojgeyhhSfSvmEJt2bJDBD0RYZJU3W9igN9uS8arqmTDPrc+7Dv1ntyet97l5Q9ZXYJHV4RHFGlnoeDv2zcTxr0AxC8SHAvMx/ImIwiZ3lNhDdXgJqJAKMm1WDdyF8nQ7YqlP0rEmLU2LqbLpOso90ppncsb9xxq53II6PNnm3AoMlKJ4/j4wMxLW2VIya2GGJ40n/bvnPrF7Bas9lRQQ20pSa2KfdDq+CzBQ1S7TvMN1aT6iiEB0ucXLVD4XAuBh4/SNeaMkB53UWdJ4VtxQXqpDOkkhZU/52NqMe7XXeYpkN14mrS9ZmTng52iPNRWCv841t4zdSw5LiymShRY3piI/sNyiAY30S00YYYY0HA0jUxQqoitK5WBde+CFsviLqK903mLOUOfk4hd9tk3E6AsoLYHJUVxwZIydTi2gKbQ=
+    file: "proxyfs"
+    skip_cleanup: true
+    on:
+        tags: true
