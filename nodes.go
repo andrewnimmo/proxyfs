@@ -87,14 +87,14 @@ func (*reqDirElement) AddNode(name string, node interface{}) error {
 }
 
 func (*reqDirElement) RemoveNode(name string) error {
-	return fuse.EPERM
+	return nil
 }
 
 // newHTTPReqDir returns a Dir that represents the values of a http.Request
 // object. By default, these values are readable and writeable.
 func newHTTPReqDir(req *http.Request, forward chan int) *fusebox.Dir {
 	ret := fusebox.NewDir(newReqDirElement(req, forward))
-	ret.Mode = os.ModeDir | 0444
+	ret.Mode = os.ModeDir | 0666
 	return ret
 }
 
@@ -168,14 +168,14 @@ func (*respDirElement) AddNode(name string, node interface{}) error {
 }
 
 func (*respDirElement) RemoveNode(name string) error {
-	return fuse.EPERM
+	return nil
 }
 
 // newHTTPRespDir returns a Dir that represents the values of a http.Response
 // object. By default, these values are readable and writeable.
 func newHTTPRespDir(resp *http.Response, forward chan int) *fusebox.Dir {
 	ret := fusebox.NewDir(newRespDirElement(resp, forward))
-	ret.Mode = os.ModeDir | 0444
+	ret.Mode = os.ModeDir | 0666
 	return ret
 }
 
@@ -221,7 +221,7 @@ func (e *reqListElement) RemoveNode(name string) error {
 
 func newReqListDir(l *[]proxyReq) *fusebox.Dir {
 	ret := fusebox.NewDir(&reqListElement{l})
-	ret.Mode = os.ModeDir | 0444
+	ret.Mode = os.ModeDir | 0666
 	return ret
 }
 
@@ -266,7 +266,7 @@ func (e *respListElement) RemoveNode(name string) error {
 
 func newRespListDir(l *[]proxyResp) *fusebox.Dir {
 	ret := fusebox.NewDir(&respListElement{l})
-	ret.Mode = os.ModeDir | 0444
+	ret.Mode = os.ModeDir | 0666
 	return ret
 }
 
@@ -357,7 +357,7 @@ func (e *headerElement) AddNode(name string, node interface{}) error {
 	return fuse.EPERM
 }
 func (e *headerElement) RemoveNode(name string) error {
-	return fuse.EPERM
+	return nil
 }
 
 // Returns a new Dir that exposes the headers of a request or response, with
@@ -366,7 +366,7 @@ func (e *headerElement) RemoveNode(name string) error {
 // for a given key in http.Header
 func newHTTPHeaderDir(h *http.Header) *fusebox.Dir {
 	ret := fusebox.NewDir(&headerElement{h})
-	ret.Mode = os.ModeDir | 0444
+	ret.Mode = os.ModeDir | 0666
 	return ret
 }
 
