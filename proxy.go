@@ -20,10 +20,12 @@ type Proxy struct {
 	FS        *fusebox.FS
 	IntReq    bool
 	IntResp   bool
-	Requests  []proxyReq
-	Responses []proxyResp
 	reqMu     *sync.RWMutex
 	respMu    *sync.RWMutex
+	Requests  []proxyReq
+	Responses []proxyResp
+	ReqChan   chan []byte
+	RespChan  chan []byte
 }
 
 // proxyReq is a wrapper for a http.Request, and a channel used to control intercepting
@@ -58,6 +60,8 @@ func NewProxy(scope string) (*Proxy, error) {
 		Responses: make([]proxyResp, 0),
 		reqMu:     &sync.RWMutex{},
 		respMu:    &sync.RWMutex{},
+		ReqChan:   make(chan []byte, 10),
+		RespChan:  make(chan []byte, 10),
 	}
 
 	fs, d := fusebox.NewEmptyFS()
@@ -73,6 +77,13 @@ func NewProxy(scope string) (*Proxy, error) {
 	// Responses and requests
 	d.AddNode("req", newReqListDir(&ret.Requests))
 	d.AddNode("resp", newRespListDir(&ret.Responses))
+
+	reqChanNode := fusebox.NewBytePipeFile(ret.ReqChan)
+	respChanNode := fusebox.NewBytePipeFile(ret.RespChan)
+	reqChanNode.Mode = 0444
+	respChanNode.Mode = 0444
+	d.AddNode("urlreq", reqChanNode)
+	d.AddNode("urlresp", respChanNode)
 
 	go ret.dispatchIntercepts(reqNode.Change, respNode.Change)
 
@@ -110,6 +121,9 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 
 	p.respMu.Lock()
 	p.Responses = append(p.Responses, pr)
+	if len(p.Responses) == 1 {
+		go p.broadcastResponse()
+	}
 	p.respMu.Unlock()
 
 	// Wait until forwarded
@@ -126,6 +140,9 @@ func (p *Proxy) HandleResponse(r *http.Response, ctx *goproxy.ProxyCtx) *http.Re
 	for i, x := range p.Responses {
 		if x.ID == pr.ID {
 			p.Responses = append(p.Responses[:i], p.Responses[i+1:]...)
+			if i == 0 {
+				go p.broadcastResponse()
+			}
 			break
 		}
 	}
@@ -150,6 +167,9 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 
 	p.reqMu.Lock()
 	p.Requests = append(p.Requests, pr)
+	if len(p.Requests) == 1 {
+		go p.broadcastRequest()
+	}
 	p.reqMu.Unlock()
 
 	// Wait until forwarded
@@ -167,6 +187,9 @@ func (p *Proxy) HandleRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Req
 	for i, x := range p.Requests {
 		if x.ID == pr.ID {
 			p.Requests = append(p.Requests[:i], p.Requests[i+1:]...)
+			if i == 0 {
+				go p.broadcastRequest()
+			}
 		}
 	}
 	p.reqMu.Unlock()
@@ -198,6 +221,22 @@ func (p *Proxy) dispatchIntercepts(req <-chan int, resp <-chan int) {
 			}
 		}
 	}
+}
+
+func (p *Proxy) broadcastRequest() {
+	if len(p.Requests) == 0 {
+		return
+	}
+	u := p.Requests[0].Req.URL.String()
+	p.ReqChan <- append([]byte(u), '\n')
+}
+
+func (p *Proxy) broadcastResponse() {
+	if len(p.Responses) == 0 {
+		return
+	}
+	u := p.Responses[0].Resp.Request.URL.String()
+	p.RespChan <- append([]byte(u), '\n')
 }
 
 // Create the response returned when a request or response is dropped.
