@@ -297,7 +297,7 @@ func (bf *httpBodyFile) readCopy() ([]byte, error) {
 func (bf *httpBodyFile) ValRead(ctx context.Context) ([]byte, error) {
 	data, err := bf.readCopy()
 	if err != nil {
-		return nil, fuse.ENODATA
+		return nil, fuse.EIO
 	}
 
 	return data, nil
@@ -387,7 +387,7 @@ func newHTTPReqRawFile(req *http.Request) *fusebox.File {
 func (rf *httpReqRawFile) ValRead(ctx context.Context) ([]byte, error) {
 	data, err := httputil.DumpRequest(rf.Data, true)
 	if err != nil {
-		return nil, fuse.ENODATA
+		return nil, fuse.EIO
 	}
 
 	return data, nil
@@ -408,7 +408,7 @@ func (rf *httpReqRawFile) ValWrite(ctx context.Context, req *fuse.WriteRequest, 
 func (rf *httpReqRawFile) Size(context.Context) (uint64, error) {
 	data, err := httputil.DumpRequest(rf.Data, true)
 	if err != nil {
-		return 0, fuse.ENODATA
+		return 0, fuse.EIO
 	}
 
 	return uint64(len(data)), nil
@@ -431,7 +431,7 @@ func newHTTPRespRawFile(resp *http.Response) *fusebox.File {
 func (rf *httpRespRawFile) ValRead(ctx context.Context) ([]byte, error) {
 	data, err := httputil.DumpResponse(rf.Data, true)
 	if err != nil {
-		return nil, fuse.ENODATA
+		return nil, fuse.EIO
 	}
 
 	return data, nil
@@ -452,7 +452,7 @@ func (rf *httpRespRawFile) ValWrite(ctx context.Context, req *fuse.WriteRequest,
 func (rf *httpRespRawFile) Size(context.Context) (uint64, error) {
 	data, err := httputil.DumpResponse(rf.Data, true)
 	if err != nil {
-		return 0, fuse.ENODATA
+		return 0, fuse.EIO
 	}
 
 	return uint64(len(data)), nil
